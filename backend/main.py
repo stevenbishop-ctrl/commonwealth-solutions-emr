@@ -1572,8 +1572,43 @@ def list_imaging_orders(
     return [clean(o) for o in q.order_by(models.ImagingOrder.created_at.desc()).all()]
 
 
+async def _do_fax_imaging_order(order: models.ImagingOrder, patient: models.Patient,
+                                physician: models.User, user_id: int, db: Session):
+    """Shared helper: build PDF, send fax, update order + FaxLog."""
+    pdf_bytes = _build_imaging_order_pdf(order, patient, physician)
+    subject = f"Imaging Order — {order.study_type} — {patient.first_name} {patient.last_name}"
+
+    if _telnyx_configured():
+        fax_to = re.sub(r"[^\d+]", "", order.fax_number)
+        if not fax_to.startswith("+"):
+            fax_to = "+1" + fax_to.lstrip("1")
+        fax_id, fax_status = await _send_telnyx_fax(fax_to, pdf_bytes, subject)
+        order.telnyx_fax_id = fax_id
+        order.fax_status = fax_status
+    else:
+        order.fax_status = "queued"
+
+    order.fax_sent_at = datetime.utcnow()
+    order.status = "faxed"
+    db.commit()
+
+    log = models.FaxLog(
+        patient_id=order.patient_id,
+        physician_id=user_id,
+        direction="sent",
+        to_number=order.fax_number,
+        subject=subject,
+        pages=1,
+        status=order.fax_status,
+        telnyx_fax_id=order.telnyx_fax_id or "",
+    )
+    db.add(log)
+    db.commit()
+    audit(db, user_id, "FAX_IMAGING_ORDER", "ImagingOrder", str(order.id))
+
+
 @app.post("/api/imaging-orders")
-def create_imaging_order(
+async def create_imaging_order(
     data: dict,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
@@ -1597,6 +1632,17 @@ def create_imaging_order(
     db.commit()
     db.refresh(order)
     audit(db, current_user.id, "CREATE_IMAGING_ORDER", "ImagingOrder", str(order.id))
+
+    # Auto-fax immediately if a fax number was provided
+    if order.fax_number:
+        patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+        try:
+            await _do_fax_imaging_order(order, patient, current_user, current_user.id, db)
+        except Exception as e:
+            # Fax failure doesn't block order creation
+            order.fax_status = "failed"
+            db.commit()
+
     return clean(order)
 
 
@@ -1746,7 +1792,7 @@ async def fax_imaging_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Generate imaging order PDF and send via Telnyx fax."""
+    """Manually (re)send an imaging order via fax — useful for retries."""
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -1756,39 +1802,7 @@ async def fax_imaging_order(
     patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
     physician = db.query(models.User).filter(models.User.id == order.physician_id).first() or current_user
 
-    # Generate PDF
-    pdf_bytes = _build_imaging_order_pdf(order, patient, physician)
-
-    subject = f"Imaging Order — {order.study_type} — {patient.first_name} {patient.last_name}"
-
-    if _telnyx_configured():
-        fax_to = re.sub(r"[^\d+]", "", order.fax_number)
-        if not fax_to.startswith("+"):
-            fax_to = "+1" + fax_to.lstrip("1")
-        fax_id, fax_status = await _send_telnyx_fax(fax_to, pdf_bytes, subject)
-        order.telnyx_fax_id = fax_id
-        order.fax_status = fax_status
-    else:
-        order.fax_status = "queued"
-
-    order.fax_sent_at = datetime.utcnow()
-    order.status = "faxed"
-    db.commit()
-
-    # Log to FaxLog
-    log = models.FaxLog(
-        patient_id=order.patient_id,
-        physician_id=current_user.id,
-        direction="sent",
-        to_number=order.fax_number,
-        subject=subject,
-        pages=1,
-        status=order.fax_status,
-        telnyx_fax_id=order.telnyx_fax_id or "",
-    )
-    db.add(log)
-    db.commit()
-    audit(db, current_user.id, "FAX_IMAGING_ORDER", "ImagingOrder", str(order_id))
+    await _do_fax_imaging_order(order, patient, physician, current_user.id, db)
     return clean(order)
 
 
