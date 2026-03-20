@@ -38,6 +38,10 @@ class Patient(Base):
     emergency_phone = Column(String, default="")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Patient portal
+    portal_email = Column(String, default="")
+    portal_password_hash = Column(String, default="")
+    portal_active = Column(Boolean, default=False)
 
 
 class ClinicalNote(Base):
@@ -60,6 +64,7 @@ class ClinicalNote(Base):
     note_type = Column(String, default="SOAP")
     ai_generated = Column(Boolean, default=False)
     status = Column(String, default="draft")   # draft, signed, amended
+    patient_visible = Column(Boolean, default=False)  # released to patient portal
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 

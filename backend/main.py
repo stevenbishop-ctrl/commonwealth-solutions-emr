@@ -1708,7 +1708,8 @@ def _build_imaging_order_pdf(order: models.ImagingOrder, patient: models.Patient
 
     # Patient info
     story.append(Paragraph("<b>PATIENT INFORMATION</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
-    pt_dob = patient.date_of_birth.strftime('%m/%d/%Y') if patient.date_of_birth else ""
+    raw_dob = getattr(patient, "dob", None) or getattr(patient, "date_of_birth", None) or ""
+    pt_dob = raw_dob if isinstance(raw_dob, str) else (raw_dob.strftime('%m/%d/%Y') if raw_dob else "")
     pt_addr = getattr(patient, "address", "") or ""
     pt_city = getattr(patient, "city", "") or ""
     pt_state = getattr(patient, "state", "") or ""
@@ -4049,6 +4050,14 @@ def _migrate_add_billing_columns(db: Session):
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS results_received_at TIMESTAMP",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_notes TEXT DEFAULT ''",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_path VARCHAR DEFAULT ''",
+        # Patient portal
+        "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_email VARCHAR DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_password_hash VARCHAR DEFAULT ''",
+        "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_active BOOLEAN DEFAULT FALSE",
+        # Note visibility
+        "ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS patient_visible BOOLEAN DEFAULT FALSE",
+        # Fax sent_at (may already exist on some deploys)
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS fax_sent_at TIMESTAMP",
     ]
     from sqlalchemy import text
     for sql in migrations:
@@ -4057,6 +4066,234 @@ def _migrate_add_billing_columns(db: Session):
         except Exception:
             db.rollback()  # SQLite doesn't support IF NOT EXISTS — skip silently
     db.commit()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PATIENT PORTAL — auth helpers + endpoints
+# ═════════════════════════════════════════════════════════════════════════════
+
+PORTAL_TOKEN_HOURS = 24
+
+def make_portal_token(patient_id: int) -> str:
+    exp = datetime.utcnow() + timedelta(hours=PORTAL_TOKEN_HOURS)
+    return jwt.encode({"sub": str(patient_id), "type": "portal", "exp": exp}, SECRET_KEY, ALGORITHM)
+
+
+portal_oauth2 = OAuth2PasswordBearer(tokenUrl="/portal/login", auto_error=False)
+
+def get_portal_patient(
+    token: str = Depends(portal_oauth2),
+    db: Session = Depends(get_db),
+) -> models.Patient:
+    credentials_exc = HTTPException(status_code=401, detail="Not authenticated")
+    if not token:
+        raise credentials_exc
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "portal":
+            raise credentials_exc
+        patient_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise credentials_exc
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient or not patient.portal_active:
+        raise credentials_exc
+    return patient
+
+
+@app.post("/portal/login")
+def portal_login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    patient = db.query(models.Patient).filter(
+        models.Patient.portal_email == form.username,
+        models.Patient.portal_active == True,
+    ).first()
+    if not patient or not patient.portal_password_hash:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not verify_pw(form.password, patient.portal_password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {"access_token": make_portal_token(patient.id), "token_type": "bearer"}
+
+
+@app.get("/portal/me")
+def portal_me(patient: models.Patient = Depends(get_portal_patient)):
+    d = clean(patient)
+    # Never expose password hash to portal
+    d.pop("portal_password_hash", None)
+    return d
+
+
+@app.get("/portal/notes")
+def portal_notes(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    notes = (db.query(models.ClinicalNote)
+             .filter(models.ClinicalNote.patient_id == patient.id,
+                     models.ClinicalNote.patient_visible == True)
+             .order_by(models.ClinicalNote.visit_date.desc())
+             .all())
+    result = []
+    for n in notes:
+        d = clean(n)
+        # Only expose safe fields — no internal codes or AI flags
+        result.append({
+            "id": d["id"],
+            "visit_date": d.get("visit_date"),
+            "chief_complaint": d.get("chief_complaint", ""),
+            "assessment": d.get("assessment", ""),
+            "plan": d.get("plan", ""),
+            "note_type": d.get("note_type", "SOAP"),
+        })
+    return result
+
+
+@app.get("/portal/labs")
+def portal_labs(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    orders = (db.query(models.LabOrder)
+              .filter(models.LabOrder.patient_id == patient.id,
+                      models.LabOrder.status == "resulted")
+              .order_by(models.LabOrder.created_at.desc())
+              .all())
+    result = []
+    for o in orders:
+        d = clean(o)
+        observations = []
+        try:
+            observations = json.loads(o.result_data or "[]")
+        except Exception:
+            pass
+        result.append({
+            "id": d["id"],
+            "created_at": d.get("created_at"),
+            "tests": json.loads(o.tests or "[]"),
+            "facility": d.get("facility", ""),
+            "status": d.get("status", ""),
+            "result_received_at": d.get("result_received_at"),
+            "observations": observations,
+        })
+    return result
+
+
+@app.get("/portal/imaging")
+def portal_imaging(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    orders = (db.query(models.ImagingOrder)
+              .filter(models.ImagingOrder.patient_id == patient.id,
+                      models.ImagingOrder.status.in_(["results_received", "completed"]))
+              .order_by(models.ImagingOrder.created_at.desc())
+              .all())
+    result = []
+    for o in orders:
+        d = clean(o)
+        result.append({
+            "id": d["id"],
+            "created_at": d.get("created_at"),
+            "study_type": d.get("study_type", ""),
+            "body_part": d.get("body_part", ""),
+            "facility": d.get("facility", ""),
+            "status": d.get("status", ""),
+            "completed_at": d.get("completed_at"),
+            "results_received_at": d.get("results_received_at"),
+            "result_notes": d.get("result_notes", ""),
+        })
+    return result
+
+
+@app.get("/portal/membership")
+def portal_membership(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    memberships = (db.query(models.Membership)
+                   .filter(models.Membership.patient_id == patient.id)
+                   .order_by(models.Membership.created_at.desc())
+                   .all())
+    result = []
+    for m in memberships:
+        d = clean(m)
+        d.pop("square_customer_id", None)
+        d.pop("square_card_id", None)
+        result.append(d)
+    return result
+
+
+@app.get("/portal/payments")
+def portal_payments(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    payments = (db.query(models.Payment)
+                .filter(models.Payment.patient_id == patient.id)
+                .order_by(models.Payment.created_at.desc())
+                .all())
+    result = []
+    for p in payments:
+        d = clean(p)
+        d.pop("payment_ref_id", None)
+        result.append(d)
+    return result
+
+
+# ── Staff: manage portal accounts ────────────────────────────────────────────
+
+@app.post("/api/patients/{patient_id}/portal/activate")
+def portal_activate(
+    patient_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Set or update a patient's portal credentials and activate their account."""
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    email = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    # Check email not already used by another patient
+    conflict = db.query(models.Patient).filter(
+        models.Patient.portal_email == email,
+        models.Patient.id != patient_id,
+    ).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail="That email is already used by another patient")
+    patient.portal_email = email
+    patient.portal_password_hash = hash_pw(password)
+    patient.portal_active = True
+    db.commit()
+    audit(db, current_user.id, "PORTAL_ACTIVATE", "Patient", str(patient_id))
+    return {"ok": True, "portal_email": email}
+
+
+@app.post("/api/patients/{patient_id}/portal/deactivate")
+def portal_deactivate(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    patient.portal_active = False
+    db.commit()
+    audit(db, current_user.id, "PORTAL_DEACTIVATE", "Patient", str(patient_id))
+    return {"ok": True}
+
+
+@app.patch("/api/notes/{note_id}/patient-visible")
+def toggle_note_visibility(
+    note_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Toggle whether a note is visible in the patient portal."""
+    note = db.query(models.ClinicalNote).filter(models.ClinicalNote.id == note_id).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    note.patient_visible = bool(data.get("patient_visible", False))
+    db.commit()
+    audit(db, current_user.id, "TOGGLE_NOTE_VISIBILITY", "ClinicalNote", str(note_id))
+    return clean(note)
+
+
+@app.get("/portal")
+def serve_portal():
+    from fastapi.responses import FileResponse
+    import os
+    portal_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "portal.html")
+    return FileResponse(os.path.abspath(portal_path))
 
 
 @app.on_event("startup")

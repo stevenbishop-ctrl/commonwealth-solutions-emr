@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Patient Portal — Valiant Direct Primary Care</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0f4f8;min-height:100vh;color:#1e293b;}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;border:none;transition:all .15s;}
+  .btn-primary{background:#1d4ed8;color:#fff;} .btn-primary:hover{background:#1e40af;}
+  .btn-secondary{background:#f1f5f9;color:#475569;border:1px solid #e2e8f0;} .btn-secondary:hover{background:#e2e8f0;}
+  .btn-sm{padding:6px 12px;font-size:13px;}
+  .input{width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;outline:none;transition:border .15s;}
+  .input:focus{border-color:#1d4ed8;box-shadow:0 0 0 3px rgba(29,78,216,.1);}
+  .card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08);padding:20px;}
+  .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:500;}
+  .badge-green{background:#dcfce7;color:#15803d;}
+  .badge-blue{background:#dbeafe;color:#1d4ed8;}
+  .badge-gray{background:#f1f5f9;color:#64748b;}
+  .badge-yellow{background:#fef9c3;color:#854d0e;}
+  .tab-bar{display:flex;gap:4px;border-bottom:2px solid #e2e8f0;margin-bottom:20px;overflow-x:auto;}
+  .tab{padding:10px 18px;font-size:14px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;color:#64748b;white-space:nowrap;background:none;border-top:none;border-left:none;border-right:none;}
+  .tab.active{border-bottom-color:#1d4ed8;color:#1d4ed8;}
+  .divider{border:none;border-top:1px solid #f1f5f9;margin:12px 0;}
+  .section-label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:8px;}
+  .spinner{border:3px solid #e2e8f0;border-top-color:#1d4ed8;border-radius:50%;width:22px;height:22px;animation:spin .6s linear infinite;display:inline-block;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty-state{text-align:center;padding:48px 20px;color:#94a3b8;}
+  .empty-state svg{margin:0 auto 12px;display:block;opacity:.4;}
+  a{color:#1d4ed8;text-decoration:none;} a:hover{text-decoration:underline;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState, useEffect, useCallback} = React;
+
+const BASE = '';
+
+async function api(method, path, body, token) {
+  const headers = {'Content-Type': 'application/json'};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(BASE + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({detail: res.statusText}));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+async function apiForm(path, formData) {
+  const res = await fetch(BASE + path, {method: 'POST', body: formData});
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({detail: res.statusText}));
+    throw new Error(err.detail || 'Login failed');
+  }
+  return res.json();
+}
+
+function fmt(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'});
+}
+
+// ── Login screen ──────────────────────────────────────────────────────────────
+function LoginPage({onLogin}) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async e => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const fd = new FormData();
+      fd.append('username', email);
+      fd.append('password', password);
+      const data = await apiForm('/portal/login', fd);
+      onLogin(data.access_token);
+    } catch(err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f 0%,#1d4ed8 100%)',padding:16}}>
+      <div style={{width:'100%',maxWidth:400}}>
+        <div style={{textAlign:'center',marginBottom:32}}>
+          <div style={{width:56,height:56,borderRadius:14,background:'rgba(255,255,255,.15)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',fontSize:28}}>🏥</div>
+          <h1 style={{color:'#fff',fontSize:24,fontWeight:700,marginBottom:6}}>Patient Portal</h1>
+          <p style={{color:'rgba(255,255,255,.7)',fontSize:14}}>Valiant Direct Primary Care</p>
+        </div>
+        <div className="card">
+          <form onSubmit={submit}>
+            <div style={{marginBottom:16}}>
+              <label style={{display:'block',fontSize:13,fontWeight:500,color:'#374151',marginBottom:6}}>Email Address</label>
+              <input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@email.com" required autoFocus/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label style={{display:'block',fontSize:13,fontWeight:500,color:'#374151',marginBottom:6}}>Password</label>
+              <input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••" required/>
+            </div>
+            {error && <div style={{background:'#fee2e2',color:'#991b1b',padding:'10px 14px',borderRadius:8,fontSize:13,marginBottom:16}}>{error}</div>}
+            <button className="btn btn-primary" type="submit" disabled={loading} style={{width:'100%',justifyContent:'center',padding:'12px'}}>
+              {loading ? <span className="spinner" style={{width:18,height:18,borderWidth:2}}/> : 'Sign In'}
+            </button>
+          </form>
+          <p style={{textAlign:'center',fontSize:13,color:'#94a3b8',marginTop:16}}>Need help? Contact your care team.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+function Header({patient, onLogout}) {
+  return (
+    <header style={{background:'#1e3a5f',color:'#fff',padding:'0 24px',height:60,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
+        <span style={{fontSize:22}}>🏥</span>
+        <div>
+          <div style={{fontWeight:700,fontSize:15}}>Valiant DPC</div>
+          <div style={{fontSize:11,opacity:.7}}>Patient Portal</div>
+        </div>
+      </div>
+      <div style={{display:'flex',alignItems:'center',gap:16}}>
+        <span style={{fontSize:14,opacity:.85}}>Hello, {patient?.first_name || 'Patient'}</span>
+        <button className="btn btn-sm" onClick={onLogout}
+          style={{background:'rgba(255,255,255,.15)',color:'#fff',border:'1px solid rgba(255,255,255,.3)'}}>Sign Out</button>
+      </div>
+    </header>
+  );
+}
+
+// ── Summary (notes) tab ───────────────────────────────────────────────────────
+function NotesTab({token}) {
+  const [notes, setNotes] = useState(null);
+  useEffect(() => {
+    api('GET', '/portal/notes', null, token).then(setNotes).catch(() => setNotes([]));
+  }, [token]);
+
+  if (!notes) return <div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>;
+  if (notes.length === 0) return (
+    <div className="empty-state">
+      <div style={{fontSize:40,marginBottom:12}}>📋</div>
+      <p style={{fontWeight:600,color:'#475569',marginBottom:4}}>No visit summaries yet</p>
+      <p style={{fontSize:13}}>Your provider will share visit summaries here after your appointments.</p>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {notes.map(n => (
+        <div key={n.id} className="card">
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:15}}>{n.note_type} Visit Summary</div>
+              <div style={{fontSize:13,color:'#64748b',marginTop:2}}>{fmt(n.visit_date)}</div>
+            </div>
+            <span className="badge badge-blue">{n.note_type}</span>
+          </div>
+          {n.chief_complaint && <div style={{marginBottom:10}}>
+            <div className="section-label">Reason for Visit</div>
+            <p style={{fontSize:14,color:'#334155'}}>{n.chief_complaint}</p>
+          </div>}
+          {n.assessment && <div style={{marginBottom:10}}>
+            <div className="section-label">Assessment</div>
+            <p style={{fontSize:14,color:'#334155',whiteSpace:'pre-wrap'}}>{n.assessment}</p>
+          </div>}
+          {n.plan && <div>
+            <div className="section-label">Plan</div>
+            <p style={{fontSize:14,color:'#334155',whiteSpace:'pre-wrap'}}>{n.plan}</p>
+          </div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Labs tab ──────────────────────────────────────────────────────────────────
+function LabsTab({token}) {
+  const [labs, setLabs] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  useEffect(() => {
+    api('GET', '/portal/labs', null, token).then(setLabs).catch(() => setLabs([]));
+  }, [token]);
+
+  if (!labs) return <div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>;
+  if (labs.length === 0) return (
+    <div className="empty-state">
+      <div style={{fontSize:40,marginBottom:12}}>🧪</div>
+      <p style={{fontWeight:600,color:'#475569',marginBottom:4}}>No lab results available</p>
+      <p style={{fontSize:13}}>Completed lab results will appear here once received from the lab.</p>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {labs.map(o => (
+        <div key={o.id} className="card">
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:15}}>{(o.tests||[]).join(', ') || 'Lab Panel'}</div>
+              <div style={{fontSize:13,color:'#64748b',marginTop:2}}>Ordered {fmt(o.created_at)} · {o.facility}</div>
+              {o.result_received_at && <div style={{fontSize:12,color:'#64748b'}}>Results received {fmt(o.result_received_at)}</div>}
+            </div>
+            <span className="badge badge-green">Resulted</span>
+          </div>
+          {(o.observations||[]).length > 0 && (
+            <div style={{marginTop:12}}>
+              <button className="btn btn-secondary btn-sm" onClick={()=>setExpanded(expanded===o.id?null:o.id)}>
+                {expanded===o.id ? '▲ Hide Results' : '▼ View Results'}
+              </button>
+              {expanded===o.id && (
+                <div style={{marginTop:10,border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                    <thead><tr style={{background:'#f8fafc'}}>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'#64748b',fontWeight:500}}>Test</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'#64748b',fontWeight:500}}>Result</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'#64748b',fontWeight:500}}>Reference</th>
+                      <th style={{padding:'8px 12px',textAlign:'left',color:'#64748b',fontWeight:500}}>Status</th>
+                    </tr></thead>
+                    <tbody>
+                      {o.observations.map((obs,i) => {
+                        const abnormal = obs.interpretation && !['N','Normal',''].includes(obs.interpretation);
+                        return (
+                          <tr key={i} style={{borderTop:'1px solid #f1f5f9',background:abnormal?'#fff7ed':'#fff'}}>
+                            <td style={{padding:'8px 12px',color:'#334155'}}>{obs.name||obs.code}</td>
+                            <td style={{padding:'8px 12px',fontWeight:abnormal?700:400,color:abnormal?'#c2410c':'#334155'}}>
+                              {obs.value}{obs.unit?' '+obs.unit:''}
+                            </td>
+                            <td style={{padding:'8px 12px',color:'#64748b'}}>{obs.reference_range||'—'}</td>
+                            <td style={{padding:'8px 12px'}}>
+                              {abnormal
+                                ? <span className="badge badge-yellow">{obs.interpretation}</span>
+                                : <span className="badge badge-green">Normal</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Imaging tab ───────────────────────────────────────────────────────────────
+function ImagingTab({token}) {
+  const [imaging, setImaging] = useState(null);
+  useEffect(() => {
+    api('GET', '/portal/imaging', null, token).then(setImaging).catch(() => setImaging([]));
+  }, [token]);
+
+  if (!imaging) return <div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>;
+  if (imaging.length === 0) return (
+    <div className="empty-state">
+      <div style={{fontSize:40,marginBottom:12}}>🩻</div>
+      <p style={{fontWeight:600,color:'#475569',marginBottom:4}}>No imaging results available</p>
+      <p style={{fontSize:13}}>Imaging results will appear here once your provider receives and reviews them.</p>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {imaging.map(o => (
+        <div key={o.id} className="card">
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:o.result_notes?12:0}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:15}}>{o.study_type}{o.body_part?' — '+o.body_part:''}</div>
+              <div style={{fontSize:13,color:'#64748b',marginTop:2}}>Ordered {fmt(o.created_at)}{o.facility?' · '+o.facility:''}</div>
+              {o.completed_at && <div style={{fontSize:12,color:'#64748b'}}>Completed {fmt(o.completed_at)}</div>}
+            </div>
+            <span className="badge badge-green">Results Available</span>
+          </div>
+          {o.result_notes && (
+            <div>
+              <div className="section-label">Radiologist Report / Impression</div>
+              <p style={{fontSize:14,color:'#334155',whiteSpace:'pre-wrap',background:'#f8fafc',padding:'10px 12px',borderRadius:8,lineHeight:1.6}}>{o.result_notes}</p>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Membership & Billing tab ──────────────────────────────────────────────────
+function MembershipTab({token}) {
+  const [memberships, setMemberships] = useState(null);
+  const [payments, setPayments] = useState(null);
+
+  useEffect(() => {
+    api('GET', '/portal/membership', null, token).then(setMemberships).catch(() => setMemberships([]));
+    api('GET', '/portal/payments', null, token).then(setPayments).catch(() => setPayments([]));
+  }, [token]);
+
+  const statusBadge = s => {
+    const map = {active:'badge-green',cancelled:'badge-gray',expired:'badge-gray',past_due:'badge-yellow',suspended:'badge-yellow'};
+    return <span className={`badge ${map[s]||'badge-gray'}`}>{s?.replace('_',' ')}</span>;
+  };
+
+  if (!memberships || !payments) return <div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>;
+
+  return (
+    <div>
+      {/* Active Membership */}
+      <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Membership</h3>
+      {memberships.length === 0 ? (
+        <div className="card" style={{color:'#94a3b8',textAlign:'center',padding:32}}>No active membership on file.</div>
+      ) : memberships.map(m => (
+        <div key={m.id} className="card" style={{marginBottom:12,border:m.status==='active'?'1px solid #bbf7d0':'1px solid #e2e8f0'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+            <div>
+              <div style={{fontWeight:600,fontSize:15}}>{m.plan_name}</div>
+              <div style={{fontSize:13,color:'#64748b',marginTop:2}}>
+                ${m.price_monthly?.toFixed(2)}/month · Started {fmt(m.start_date)}
+              </div>
+            </div>
+            {statusBadge(m.billing_status === 'ok' ? m.status : m.billing_status)}
+          </div>
+          {m.next_billing_date && m.status === 'active' && (
+            <div style={{fontSize:13,color:'#64748b'}}>Next billing date: <b>{fmt(m.next_billing_date)}</b></div>
+          )}
+          {m.last_billed_at && (
+            <div style={{fontSize:13,color:'#64748b'}}>Last charged: {fmt(m.last_billed_at)}</div>
+          )}
+        </div>
+      ))}
+
+      {/* Payment history */}
+      <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12,marginTop:24}}>Payment History</h3>
+      {payments.length === 0 ? (
+        <div className="card" style={{color:'#94a3b8',textAlign:'center',padding:32}}>No payments on file.</div>
+      ) : (
+        <div className="card" style={{padding:0,overflow:'hidden'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}>
+            <thead><tr style={{background:'#f8fafc'}}>
+              <th style={{padding:'10px 16px',textAlign:'left',color:'#64748b',fontWeight:500}}>Date</th>
+              <th style={{padding:'10px 16px',textAlign:'left',color:'#64748b',fontWeight:500}}>Description</th>
+              <th style={{padding:'10px 16px',textAlign:'right',color:'#64748b',fontWeight:500}}>Amount</th>
+              <th style={{padding:'10px 16px',textAlign:'left',color:'#64748b',fontWeight:500}}>Status</th>
+            </tr></thead>
+            <tbody>
+              {payments.map((p,i) => (
+                <tr key={p.id} style={{borderTop:'1px solid #f1f5f9',background:i%2===0?'#fff':'#fafafa'}}>
+                  <td style={{padding:'10px 16px',color:'#334155'}}>{fmt(p.created_at)}</td>
+                  <td style={{padding:'10px 16px',color:'#334155'}}>{p.description||'Payment'}</td>
+                  <td style={{padding:'10px 16px',textAlign:'right',fontWeight:600,color:'#1e293b'}}>${p.amount?.toFixed(2)}</td>
+                  <td style={{padding:'10px 16px'}}>
+                    <span className={`badge ${p.status==='completed'?'badge-green':p.status==='failed'?'badge-red':'badge-gray'}`}>
+                      {p.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Profile sidebar ───────────────────────────────────────────────────────────
+function ProfileCard({patient}) {
+  if (!patient) return null;
+  const fullAddr = [patient.address, [patient.city,patient.state].filter(Boolean).join(', '), patient.zip_code].filter(Boolean).join(', ');
+  return (
+    <div className="card" style={{marginBottom:16}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+        <div style={{width:44,height:44,borderRadius:22,background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
+          {(patient.first_name||'?')[0]}{(patient.last_name||'?')[0]}
+        </div>
+        <div>
+          <div style={{fontWeight:700,fontSize:16}}>{patient.first_name} {patient.last_name}</div>
+          <div style={{fontSize:13,color:'#64748b'}}>Patient</div>
+        </div>
+      </div>
+      {[
+        ['Date of Birth', patient.dob],
+        ['Phone', patient.phone],
+        ['Email', patient.portal_email || patient.email],
+        ['Address', fullAddr || null],
+      ].filter(([,v])=>v).map(([l,v])=>(
+        <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:13}}>
+          <span style={{color:'#64748b'}}>{l}</span>
+          <span style={{fontWeight:500,color:'#334155',textAlign:'right',maxWidth:'60%'}}>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Main portal app ───────────────────────────────────────────────────────────
+function PortalApp() {
+  const [token, setToken] = useState(() => sessionStorage.getItem('portal_token') || '');
+  const [patient, setPatient] = useState(null);
+  const [tab, setTab] = useState('notes');
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    sessionStorage.setItem('portal_token', token);
+    api('GET', '/portal/me', null, token)
+      .then(setPatient)
+      .catch(e => { setLoadError(e.message); setToken(''); sessionStorage.removeItem('portal_token'); });
+  }, [token]);
+
+  const logout = () => {
+    setToken('');
+    setPatient(null);
+    sessionStorage.removeItem('portal_token');
+  };
+
+  if (!token || loadError) {
+    return <LoginPage onLogin={t => { setToken(t); setLoadError(''); }}/>;
+  }
+
+  if (!patient) {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <span className="spinner" style={{width:36,height:36,borderWidth:4}}/>
+      </div>
+    );
+  }
+
+  const tabs = [
+    {id:'notes', label:'📋 Visit Summaries'},
+    {id:'labs', label:'🧪 Lab Results'},
+    {id:'imaging', label:'🩻 Imaging'},
+    {id:'membership', label:'⭐ Membership & Billing'},
+  ];
+
+  return (
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column'}}>
+      <Header patient={patient} onLogout={logout}/>
+      <div style={{flex:1,maxWidth:1100,margin:'0 auto',width:'100%',padding:'24px 16px',display:'grid',gridTemplateColumns:'260px 1fr',gap:20,alignItems:'start'}}>
+        {/* Sidebar */}
+        <div>
+          <ProfileCard patient={patient}/>
+          <div className="card" style={{background:'#eff6ff',border:'1px solid #bfdbfe'}}>
+            <div style={{fontSize:13,fontWeight:600,color:'#1d4ed8',marginBottom:6}}>Need to reach us?</div>
+            <div style={{fontSize:13,color:'#334155',lineHeight:1.6}}>
+              Call or text your care team directly. As a DPC member you have direct access to your physician.
+            </div>
+          </div>
+        </div>
+        {/* Main content */}
+        <div>
+          <div className="tab-bar">
+            {tabs.map(t => (
+              <button key={t.id} className={`tab${tab===t.id?' active':''}`} onClick={()=>setTab(t.id)}>{t.label}</button>
+            ))}
+          </div>
+          {tab==='notes' && <NotesTab token={token}/>}
+          {tab==='labs' && <LabsTab token={token}/>}
+          {tab==='imaging' && <ImagingTab token={token}/>}
+          {tab==='membership' && <MembershipTab token={token}/>}
+        </div>
+      </div>
+      <footer style={{textAlign:'center',padding:'16px',fontSize:12,color:'#94a3b8',borderTop:'1px solid #e2e8f0',background:'#fff'}}>
+        Valiant Direct Primary Care · Patient Portal · Secure &amp; HIPAA-Compliant
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<PortalApp/>);
+</script>
+</body>
+</html>

@@ -641,6 +641,8 @@ function PatientChart({token,patient,onBack,user}){
   const [payments,setPayments]=useState([]);
   const [patientData,setPatientData]=useState(patient);
   const [editingPatient,setEditingPatient]=useState(false);
+  const [portalForm,setPortalForm]=useState({email:'',password:''});
+  const [portalSaving,setPortalSaving]=useState(false);
   const [editNote,setEditNote]=useState(null);
   const [showNewNote,setShowNewNote]=useState(false);
   const [showLabForm,setShowLabForm]=useState(false);
@@ -790,6 +792,57 @@ function PatientChart({token,patient,onBack,user}){
                   ))}
                 </div>
               </div>
+              {/* Patient Portal Activation */}
+              <div className="card" style={{marginTop:16,border: patientData.portal_active ? '1px solid #bbf7d0' : '1px solid #e2e8f0'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',margin:0}}>Patient Portal Access</h3>
+                  {patientData.portal_active
+                    ? <span className="badge badge-green">Active</span>
+                    : <span className="badge badge-gray">Not Activated</span>}
+                </div>
+                {patientData.portal_active&&(
+                  <div style={{marginBottom:12,fontSize:13,color:'#374151'}}>
+                    Login email: <b>{patientData.portal_email}</b>
+                    <span style={{color:'#94a3b8',marginLeft:8}}>· Patient can log in at /portal</span>
+                  </div>
+                )}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+                  <div>
+                    <label className="label">{patientData.portal_active ? 'Change Email' : 'Portal Email'}</label>
+                    <input className="input" type="email" value={portalForm.email} onChange={e=>setPortalForm(f=>({...f,email:e.target.value}))}
+                      placeholder={patientData.portal_email||'patient@email.com'}/>
+                  </div>
+                  <div>
+                    <label className="label">{patientData.portal_active ? 'New Password (leave blank to keep)' : 'Temporary Password'}</label>
+                    <input className="input" type="password" value={portalForm.password} onChange={e=>setPortalForm(f=>({...f,password:e.target.value}))}
+                      placeholder={patientData.portal_active ? 'Leave blank to keep current' : 'Set initial password'}/>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="btn btn-primary" disabled={portalSaving} onClick={async()=>{
+                    const email = portalForm.email || patientData.portal_email;
+                    const password = portalForm.password;
+                    if(!email){toast('Email is required','error');return;}
+                    if(!patientData.portal_active && !password){toast('Password is required for first activation','error');return;}
+                    if(patientData.portal_active && !password && !portalForm.email){toast('Nothing to update','error');return;}
+                    setPortalSaving(true);
+                    const payload = {email};
+                    if(password) payload.password = password;
+                    const r = await api('POST',`/api/patients/${patientData.id}/portal/activate`,payload,token).catch(e=>{toast(e.message,'error');return null;});
+                    if(r){setPatientData(d=>({...d,portal_active:true,portal_email:email}));setPortalForm({email:'',password:''});toast(patientData.portal_active?'Portal credentials updated':'Portal activated');}
+                    setPortalSaving(false);
+                  }}>{portalSaving?<Spinner/>:(patientData.portal_active?'Update Credentials':'Activate Portal')}</button>
+                  {patientData.portal_active&&(
+                    <button className="btn btn-danger" disabled={portalSaving} onClick={async()=>{
+                      if(!confirm('Deactivate portal access for this patient?')) return;
+                      setPortalSaving(true);
+                      const r = await api('POST',`/api/patients/${patientData.id}/portal/deactivate`,{},token).catch(e=>{toast(e.message,'error');return null;});
+                      if(r){setPatientData(d=>({...d,portal_active:false}));toast('Portal access deactivated');}
+                      setPortalSaving(false);
+                    }}>Deactivate</button>
+                  )}
+                </div>
+              </div>
             </div>
           ):(
             <PatientForm token={token} patient={patientData}
@@ -819,9 +872,18 @@ function PatientChart({token,patient,onBack,user}){
                     {JSON.parse(n.cpt_codes||'[]').slice(0,2).map(c=><span key={c} className="badge badge-green">{c}</span>)}
                   </div>
                 </div>
-                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
                   <button className="btn btn-outline" onClick={()=>downloadPDF(n.id)} disabled={pdfLoading===n.id}><Icon name="pdf" size={14}/>{pdfLoading===n.id?'…':'PDF'}</button>
                   {n.status!=='signed'&&<button className="btn btn-outline" onClick={()=>setEditNote(n)}><Icon name="edit" size={14}/>Edit</button>}
+                  <button
+                    className={`btn ${n.patient_visible?'btn-success':'btn-outline'}`}
+                    style={{fontSize:12}}
+                    title={n.patient_visible?'Visible in patient portal — click to hide':'Click to release to patient portal'}
+                    onClick={async()=>{
+                      const r=await api('PATCH',`/api/notes/${n.id}/patient-visible`,{patient_visible:!n.patient_visible},token).catch(e=>{toast(e.message,'error');return null;});
+                      if(r) setNotes(notes.map(x=>x.id===n.id?{...x,patient_visible:r.patient_visible}:x));
+                    }}
+                  >{n.patient_visible?'👁 In Portal':'Share to Portal'}</button>
                 </div>
               </div>
             </div>
@@ -1511,7 +1573,7 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
         <div style={{fontWeight:600,color:'#0369a1',marginBottom:4,fontSize:12,textTransform:'uppercase',letterSpacing:'0.05em'}}>Patient Information</div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 24px',color:'#334155'}}>
           <div><span style={{fontWeight:600}}>Name: </span>{patient.first_name} {patient.last_name}</div>
-          <div><span style={{fontWeight:600}}>DOB: </span>{patient.date_of_birth||'—'}</div>
+          <div><span style={{fontWeight:600}}>DOB: </span>{patient.dob||'—'}</div>
           <div><span style={{fontWeight:600}}>Phone: </span>{patient.phone||'—'}</div>
           <div><span style={{fontWeight:600}}>MRN: </span>PT-{String(patient.id).padStart(5,'0')}</div>
           {(patient.address||patient.city)&&(
