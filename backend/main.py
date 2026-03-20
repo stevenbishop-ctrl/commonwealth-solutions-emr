@@ -661,11 +661,16 @@ def audit(
 
 
 def user_dict(u: models.User) -> dict:
+    changed_at = getattr(u, "password_changed_at", None) or getattr(u, "created_at", None)
+    days_remaining = None
+    if changed_at:
+        days_remaining = max(0, PASSWORD_EXPIRY_DAYS - (datetime.utcnow() - changed_at).days)
     return {
         "id": u.id, "username": u.username, "full_name": u.full_name,
         "email": u.email, "role": u.role, "npi_number": u.npi_number,
         "specialty": u.specialty, "is_active": u.is_active,
         "mfa_enabled": bool(getattr(u, "mfa_enabled", False)),
+        "password_expires_in_days": days_remaining,
     }
 
 
@@ -690,6 +695,27 @@ def _make_mfa_pending_token(user_id: int) -> str:
     )
 
 
+PASSWORD_EXPIRY_DAYS = 90  # HIPAA-aligned maximum password age
+
+
+def _password_is_expired(user: models.User) -> bool:
+    """Return True if the user's password has not been changed in PASSWORD_EXPIRY_DAYS days."""
+    changed_at = getattr(user, "password_changed_at", None)
+    if changed_at is None:
+        # Never recorded — treat created_at as the baseline; if that's also missing, force reset
+        changed_at = getattr(user, "created_at", None)
+    if changed_at is None:
+        return True
+    return (datetime.utcnow() - changed_at).days >= PASSWORD_EXPIRY_DAYS
+
+
+def _make_pw_expired_token(user_id: int) -> str:
+    exp = datetime.utcnow() + timedelta(minutes=15)
+    return jwt.encode(
+        {"sub": str(user_id), "type": "pw_expired", "exp": exp}, SECRET_KEY, ALGORITHM
+    )
+
+
 @app.post("/api/auth/login")
 def login(
     form: OAuth2PasswordRequestForm = Depends(),
@@ -709,6 +735,10 @@ def login(
     if getattr(user, "mfa_enabled", False) and user.mfa_secret:
         audit(db, user.id, "LOGIN_MFA_CHALLENGE", "User", str(user.id), request=request)
         return {"mfa_required": True, "mfa_token": _make_mfa_pending_token(user.id)}
+    # Check password expiry (90-day policy)
+    if _password_is_expired(user):
+        audit(db, user.id, "LOGIN_PASSWORD_EXPIRED", "User", str(user.id), request=request)
+        return {"password_expired": True, "reset_token": _make_pw_expired_token(user.id)}
     token = make_token(user.id, user.role)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
@@ -798,9 +828,45 @@ def change_password(
         raise HTTPException(status_code=400, detail="Current password incorrect")
     _validate_password(data["new_password"])
     current_user.password_hash = hash_pw(data["new_password"])
+    current_user.password_changed_at = datetime.utcnow()
     db.commit()
     audit(db, current_user.id, "CHANGE_PASSWORD", "User", str(current_user.id))
     return {"success": True}
+
+
+@app.post("/api/auth/reset-expired-password")
+def reset_expired_password(
+    data: dict,
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Called when login returns password_expired=True.
+    Validates the short-lived pw_expired token, verifies the current password,
+    sets a new password, and returns a full access token.
+    """
+    reset_token = data.get("reset_token", "")
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+    try:
+        payload = jwt.decode(reset_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "pw_expired":
+            raise HTTPException(status_code=401, detail="Invalid reset token")
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid or expired reset token")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid reset token")
+    if not verify_pw(current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    _validate_password(new_password)
+    user.password_hash = hash_pw(new_password)
+    user.password_changed_at = datetime.utcnow()
+    db.commit()
+    audit(db, user.id, "PASSWORD_RESET_EXPIRED", "User", str(user.id), request=request)
+    token = make_token(user.id, user.role)
+    return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -830,6 +896,7 @@ def create_user(
         specialty=data.get("specialty", ""),
         role=data.get("role", "physician"),
         is_active=True,
+        password_changed_at=datetime.utcnow(),
     )
     db.add(u)
     db.commit()
@@ -854,6 +921,7 @@ def update_user(
     if "password" in data and data["password"]:
         _validate_password(data["password"])
         u.password_hash = hash_pw(data["password"])
+        u.password_changed_at = datetime.utcnow()
     db.commit()
     audit(db, current_user.id, "UPDATE_USER", "User", str(user_id))
     return user_dict(u)
@@ -4273,6 +4341,19 @@ def _migrate_add_billing_columns(db: Session):
         # Imaging result DB blob storage (Risk 12)
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_data TEXT",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_name VARCHAR DEFAULT ''",
+        # Password expiry tracking
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP",
+        # Workforce training records (POL-HIPAA-001)
+        """CREATE TABLE IF NOT EXISTS training_records (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            training_name VARCHAR NOT NULL,
+            training_type VARCHAR DEFAULT 'hipaa_annual',
+            completed_at TIMESTAMP NOT NULL,
+            recorded_by INTEGER REFERENCES users(id),
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW()
+        )""",
     ]
     from sqlalchemy import text
     for sql in migrations:
@@ -5316,6 +5397,236 @@ def download_policy(
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=pol["filename"],
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECURITY ALERTS  (automated anomaly detection on audit log)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_ALERT_WINDOW_HOURS = 1       # sliding window for bulk-access detection
+_BULK_PATIENT_THRESHOLD = 20  # unique patients in _ALERT_WINDOW_HOURS → alert
+_BULK_EXPORT_THRESHOLD = 3    # exports in 24 h → alert
+_AFTER_HOURS_START = 0        # midnight UTC
+_AFTER_HOURS_END = 5          # 5 AM UTC
+
+
+@app.get("/api/security-alerts")
+def security_alerts(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns a list of anomaly alerts derived from recent audit log entries.
+    Used to drive the badge on the Audit Logs tab and the alert panel.
+    """
+    if current_user.role not in ("admin", "physician"):
+        raise HTTPException(status_code=403, detail="Not authorised")
+
+    alerts = []
+    now = datetime.utcnow()
+    window_1h = now - timedelta(hours=_ALERT_WINDOW_HOURS)
+    window_24h = now - timedelta(hours=24)
+
+    # 1 — Bulk patient record access (any single user viewing 20+ unique patients in 1 h)
+    recent_views = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action.in_([
+                "VIEW_PATIENT", "VIEW_NOTES", "VIEW_LAB_ORDERS",
+                "VIEW_IMAGING_ORDERS", "VIEW_PRESCRIPTIONS", "VIEW_MEDICATIONS",
+            ]),
+            models.AuditLog.user_id != None,
+            models.AuditLog.timestamp >= window_1h,
+        )
+        .all()
+    )
+    from collections import defaultdict
+    user_patients: dict = defaultdict(set)
+    for row in recent_views:
+        user_patients[row.user_id].add(row.resource_id)
+    for uid, patient_ids in user_patients.items():
+        if len(patient_ids) >= _BULK_PATIENT_THRESHOLD:
+            user = db.query(models.User).filter(models.User.id == uid).first()
+            uname = user.full_name if user else f"User #{uid}"
+            alerts.append({
+                "severity": "high",
+                "type": "BULK_RECORD_ACCESS",
+                "message": f"{uname} accessed {len(patient_ids)} patient records in the last hour",
+                "detail": f"user_id={uid}, unique patients={len(patient_ids)}",
+                "timestamp": now.isoformat() + "Z",
+            })
+
+    # 2 — Failed login spike (10+ failures in the last hour from any single IP)
+    failed_logins = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "LOGIN_FAILED",
+            models.AuditLog.timestamp >= window_1h,
+        )
+        .all()
+    )
+    ip_failures: dict = defaultdict(int)
+    for row in failed_logins:
+        ip_failures[row.ip_address or "unknown"] += 1
+    for ip, count in ip_failures.items():
+        if count >= 10:
+            alerts.append({
+                "severity": "high",
+                "type": "FAILED_LOGIN_SPIKE",
+                "message": f"{count} failed login attempts from {ip} in the last hour",
+                "detail": f"ip={ip}, failures={count}",
+                "timestamp": now.isoformat() + "Z",
+            })
+
+    # 3 — After-hours admin actions (any admin action midnight–5 AM UTC)
+    after_hours = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.timestamp >= window_24h,
+            models.AuditLog.action.in_([
+                "CREATE_USER", "UPDATE_USER", "DELETE_USER",
+                "EXPORT_PATIENT_RECORDS", "PORTAL_ACTIVATE", "PORTAL_DEACTIVATE",
+            ]),
+        )
+        .all()
+    )
+    for row in after_hours:
+        h = row.timestamp.hour
+        if _AFTER_HOURS_START <= h < _AFTER_HOURS_END:
+            user = db.query(models.User).filter(models.User.id == row.user_id).first() if row.user_id else None
+            uname = user.full_name if user else "Unknown"
+            alerts.append({
+                "severity": "medium",
+                "type": "AFTER_HOURS_ADMIN",
+                "message": f"Admin action '{row.action}' performed at {row.timestamp.strftime('%H:%M')} UTC",
+                "detail": f"user={uname}, action={row.action}, resource={row.resource_type} #{row.resource_id}",
+                "timestamp": row.timestamp.isoformat() + "Z",
+            })
+
+    # 4 — Bulk record exports (3+ exports in 24 h)
+    exports = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "EXPORT_PATIENT_RECORDS",
+            models.AuditLog.timestamp >= window_24h,
+        )
+        .all()
+    )
+    if len(exports) >= _BULK_EXPORT_THRESHOLD:
+        alerts.append({
+            "severity": "medium",
+            "type": "BULK_EXPORT",
+            "message": f"{len(exports)} patient record exports in the last 24 hours",
+            "detail": f"count={len(exports)}",
+            "timestamp": now.isoformat() + "Z",
+        })
+
+    # Sort: high first, then by timestamp desc
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    alerts.sort(key=lambda a: (severity_order.get(a["severity"], 9), a["timestamp"]), reverse=False)
+    alerts.sort(key=lambda a: severity_order.get(a["severity"], 9))
+
+    return {"alerts": alerts, "count": len(alerts)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WORKFORCE TRAINING RECORDS  (POL-HIPAA-001)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_REQUIRED_TRAININGS = [
+    {"type": "hipaa_initial",  "name": "HIPAA Privacy & Security Initial Training"},
+    {"type": "hipaa_annual",   "name": "HIPAA Annual Refresher Training"},
+    {"type": "security",       "name": "Security Awareness & Phishing Training"},
+    {"type": "breach",         "name": "Breach Notification Procedures"},
+]
+
+
+@app.get("/api/training-records")
+def list_training_records(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    users = db.query(models.User).filter(models.User.is_active == True).all()
+    records = db.query(models.TrainingRecord).all()
+    # Build a lookup: user_id → list of training records
+    by_user: dict = defaultdict(list)
+    for r in records:
+        by_user[r.user_id].append({
+            "id": r.id,
+            "training_name": r.training_name,
+            "training_type": r.training_type,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "notes": r.notes or "",
+            "recorded_by": r.recorded_by,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {
+        "required_trainings": _REQUIRED_TRAININGS,
+        "staff": [
+            {
+                "user_id": u.id,
+                "full_name": u.full_name,
+                "username": u.username,
+                "role": u.role,
+                "records": by_user.get(u.id, []),
+            }
+            for u in users
+        ],
+    }
+
+
+@app.post("/api/training-records")
+def create_training_record(
+    data: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    user_id = data.get("user_id")
+    training_name = (data.get("training_name") or "").strip()
+    training_type = data.get("training_type", "hipaa_annual")
+    completed_at_str = data.get("completed_at", "")
+    notes = (data.get("notes") or "").strip()
+    if not user_id or not training_name:
+        raise HTTPException(status_code=400, detail="user_id and training_name are required")
+    try:
+        completed_at = datetime.fromisoformat(completed_at_str) if completed_at_str else datetime.utcnow()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid completed_at date")
+    rec = models.TrainingRecord(
+        user_id=user_id,
+        training_name=training_name,
+        training_type=training_type,
+        completed_at=completed_at,
+        recorded_by=current_user.id,
+        notes=notes,
+    )
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    audit(db, current_user.id, "RECORD_TRAINING", "User", str(user_id),
+          details=f"{training_name} — {training_type}")
+    return {"id": rec.id, "ok": True}
+
+
+@app.delete("/api/training-records/{record_id}")
+def delete_training_record(
+    record_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    rec = db.query(models.TrainingRecord).filter(models.TrainingRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Record not found")
+    db.delete(rec)
+    db.commit()
+    audit(db, current_user.id, "DELETE_TRAINING_RECORD", "TrainingRecord", str(record_id))
+    return {"ok": True}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

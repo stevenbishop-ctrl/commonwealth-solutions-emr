@@ -16,6 +16,7 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     mfa_enabled = Column(Boolean, default=False)
     mfa_secret = Column(String, nullable=True)
+    password_changed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -455,3 +456,16 @@ class AuditLog(Base):
     ip_address = Column(String, default="")
     details = Column(Text, default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class TrainingRecord(Base):
+    """Workforce HIPAA training completion records — POL-HIPAA-001."""
+    __tablename__ = "training_records"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    training_name = Column(String, nullable=False)
+    training_type = Column(String, default="hipaa_annual")  # hipaa_initial|hipaa_annual|security|custom
+    completed_at = Column(DateTime, nullable=False)
+    recorded_by = Column(Integer, ForeignKey("users.id"), nullable=True)  # admin who logged it
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)

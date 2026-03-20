@@ -170,6 +170,10 @@ function LoginPage({onLogin}){
   const [mfaPending,setMfaPending]=useState(false);
   const [mfaToken,setMfaToken]=useState('');
   const [mfaCode,setMfaCode]=useState('');
+  // Password expiry step
+  const [pwExpired,setPwExpired]=useState(false);
+  const [pwResetToken,setPwResetToken]=useState('');
+  const [pwExpiredForm,setPwExpiredForm]=useState({current:'',newPw:'',confirm:''});
 
   const submit=async e=>{
     e.preventDefault();
@@ -184,10 +188,31 @@ function LoginPage({onLogin}){
       if(data.mfa_required){
         setMfaToken(data.mfa_token);
         setMfaPending(true);
+      } else if(data.password_expired){
+        setPwResetToken(data.reset_token);
+        setPwExpiredForm({current:form.password,newPw:'',confirm:''});
+        setPwExpired(true);
       } else {
         onLogin(data.access_token,data.user);
       }
     }catch(e){setErr(e.message||'Login failed');}
+    finally{setLoading(false);}
+  };
+
+  const submitPwReset=async e=>{
+    e.preventDefault();
+    if(pwExpiredForm.newPw!==pwExpiredForm.confirm){setErr('New passwords do not match');return;}
+    setLoading(true);setErr('');
+    try{
+      const r=await fetch(API+'/api/auth/reset-expired-password',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reset_token:pwResetToken,current_password:pwExpiredForm.current,new_password:pwExpiredForm.newPw}),
+      });
+      if(!r.ok){const e=await r.json();throw new Error(e.detail);}
+      const data=await r.json();
+      onLogin(data.access_token,data.user);
+    }catch(e){setErr(e.message||'Password reset failed');}
     finally{setLoading(false);}
   };
 
@@ -219,6 +244,44 @@ function LoginPage({onLogin}){
       <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
     </div>
   );
+
+  if(pwExpired){
+    return(
+      <div style={wrapStyle}>
+        <div style={cardStyle}>
+          {header}
+          <div style={{textAlign:'center',marginBottom:20}}>
+            <div style={{fontSize:40,marginBottom:8}}>🔑</div>
+            <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>Password Expired</h2>
+            <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Your password is more than 90 days old. Please set a new password to continue.</p>
+          </div>
+          {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
+          <form onSubmit={submitPwReset}>
+            <div style={{marginBottom:14}}>
+              <label className="label">Current Password</label>
+              <input className="input" type="password" value={pwExpiredForm.current}
+                onChange={e=>setPwExpiredForm({...pwExpiredForm,current:e.target.value})} required/>
+            </div>
+            <div style={{marginBottom:14}}>
+              <label className="label">New Password</label>
+              <input className="input" type="password" value={pwExpiredForm.newPw} autoFocus
+                onChange={e=>setPwExpiredForm({...pwExpiredForm,newPw:e.target.value})}
+                placeholder="Min 12 chars, upper, lower, digit, symbol" required/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <label className="label">Confirm New Password</label>
+              <input className="input" type="password" value={pwExpiredForm.confirm}
+                onChange={e=>setPwExpiredForm({...pwExpiredForm,confirm:e.target.value})} required/>
+            </div>
+            <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',padding:'11px'}} disabled={loading}>
+              {loading?<Spinner/>:'Set New Password & Sign In'}
+            </button>
+          </form>
+          <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:16}}>HIPAA-compliant 90-day password policy</p>
+        </div>
+      </div>
+    );
+  }
 
   if(mfaPending){
     return(
@@ -3262,6 +3325,28 @@ function Settings({token,user}){
     }
   },[tab,secStatus,token]);
 
+  // Security Alerts (fetched once on mount for badge; refreshed when audit tab opens)
+  const [secAlerts,setSecAlerts]=useState([]);
+  const [alertsLoaded,setAlertsLoaded]=useState(false);
+  useEffect(()=>{
+    if(user.role==='admin'||user.role==='physician'){
+      api('GET','/api/security-alerts',null,token).then(d=>{if(d){setSecAlerts(d.alerts||[]);setAlertsLoaded(true);}});
+    }
+  },[token,user.role]);
+  const refreshAlerts=()=>{
+    api('GET','/api/security-alerts',null,token).then(d=>{if(d)setSecAlerts(d.alerts||[]);});
+  };
+
+  // Workforce Training
+  const [training,setTraining]=useState(null);
+  const [trainingLoaded,setTrainingLoaded]=useState(false);
+  useEffect(()=>{
+    if(tab==='training'&&!trainingLoaded){
+      api('GET','/api/training-records',null,token).then(d=>{if(d){setTraining(d);setTrainingLoaded(true);}});
+    }
+  },[tab,trainingLoaded,token]);
+  const reloadTraining=()=>api('GET','/api/training-records',null,token).then(d=>{if(d)setTraining(d);});
+
   const downloadPolicy=async(pol)=>{
     const resp=await fetch(API+`/api/policies/${pol.id}/download`,{headers:{Authorization:'Bearer '+token}});
     if(!resp.ok){toast('Download failed','error');return;}
@@ -3276,7 +3361,10 @@ function Settings({token,user}){
       <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:20}}>Settings</h1>
       <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16}}>
         {user.role==='admin'&&<button className={`tab${tab==='users'?' active':''}`} onClick={()=>setTab('users')}>Users</button>}
-        {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>setTab('audit')}>Audit Log</button>}
+        {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>{setTab('audit');refreshAlerts();}}>
+          Audit Log{secAlerts.length>0&&<span style={{marginLeft:6,background:secAlerts.some(a=>a.severity==='high')?'#dc2626':'#f59e0b',color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:11,fontWeight:700}}>{secAlerts.length}</span>}
+        </button>}
+        {user.role==='admin'&&<button className={`tab${tab==='training'?' active':''}`} onClick={()=>setTab('training')}>🎓 Training</button>}
         <button className={`tab${tab==='profile'?' active':''}`} onClick={()=>setTab('profile')}>My Profile</button>
         <button className={`tab${tab==='policies'?' active':''}`} onClick={()=>setTab('policies')}>📋 Policies</button>
         {user.role==='admin'&&<button className={`tab${tab==='security'?' active':''}`} onClick={()=>setTab('security')}>🔐 Security Status</button>}
@@ -3320,27 +3408,74 @@ function Settings({token,user}){
       )}
 
       {tab==='audit'&&user.role==='admin'&&(
-        <div className="card" style={{overflowX:'auto'}}>
-          <h3 style={{fontWeight:600,marginBottom:12}}>HIPAA Audit Log (last 500 events)</h3>
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
-            <thead><tr style={{borderBottom:'2px solid #e2e8f0'}}>
-              {['Timestamp','User','Action','Resource','Details'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:'#475569',fontWeight:600}}>{h}</th>)}
-            </tr></thead>
-            <tbody>{logs.map(l=>(
-              <tr key={l.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
-                <td style={{padding:'8px 10px',whiteSpace:'nowrap',color:'#64748b'}}>{l.timestamp?.slice(0,19).replace('T',' ')}</td>
-                <td style={{padding:'8px 10px'}}>{l.user_id}</td>
-                <td style={{padding:'8px 10px'}}><span className="badge badge-blue">{l.action}</span></td>
-                <td style={{padding:'8px 10px'}}>{l.resource_type} #{l.resource_id}</td>
-                <td style={{padding:'8px 10px',color:'#94a3b8',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
-              </tr>
-            ))}</tbody>
-          </table>
+        <div>
+          {/* Security alert panel */}
+          {secAlerts.length>0&&(
+            <div style={{marginBottom:16}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <h3 style={{fontWeight:700,color:'#1e293b',fontSize:15}}>⚠ Security Alerts ({secAlerts.length})</h3>
+                <button className="btn btn-outline" style={{fontSize:12}} onClick={refreshAlerts}>Refresh</button>
+              </div>
+              {secAlerts.map((a,i)=>(
+                <div key={i} style={{
+                  display:'flex',gap:12,alignItems:'flex-start',
+                  padding:'12px 14px',borderRadius:8,marginBottom:8,
+                  background:a.severity==='high'?'#fef2f2':'#fffbeb',
+                  border:`1px solid ${a.severity==='high'?'#fecaca':'#fde68a'}`,
+                }}>
+                  <span style={{fontSize:18,flexShrink:0}}>{a.severity==='high'?'🔴':'🟡'}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:14,color:a.severity==='high'?'#dc2626':'#92400e'}}>{a.message}</div>
+                    <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{a.detail}</div>
+                    <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{a.timestamp?.slice(0,19).replace('T',' ')} UTC</div>
+                  </div>
+                  <span style={{
+                    fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:10,
+                    background:a.severity==='high'?'#dc2626':'#f59e0b',color:'#fff',
+                    textTransform:'uppercase',flexShrink:0,
+                  }}>{a.type.replace(/_/g,' ')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {secAlerts.length===0&&alertsLoaded&&(
+            <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:18}}>✅</span>
+              <span style={{fontSize:14,color:'#15803d',fontWeight:500}}>No security anomalies detected in the current monitoring window</span>
+              <button className="btn btn-outline" style={{fontSize:12,marginLeft:'auto'}} onClick={refreshAlerts}>Refresh</button>
+            </div>
+          )}
+          <div className="card" style={{overflowX:'auto'}}>
+            <h3 style={{fontWeight:600,marginBottom:12}}>HIPAA Audit Log (last 500 events)</h3>
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+              <thead><tr style={{borderBottom:'2px solid #e2e8f0'}}>
+                {['Timestamp','User','Action','Resource','Details'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:'#475569',fontWeight:600}}>{h}</th>)}
+              </tr></thead>
+              <tbody>{logs.map(l=>(
+                <tr key={l.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
+                  <td style={{padding:'8px 10px',whiteSpace:'nowrap',color:'#64748b'}}>{l.timestamp?.slice(0,19).replace('T',' ')}</td>
+                  <td style={{padding:'8px 10px'}}>{l.user_id}</td>
+                  <td style={{padding:'8px 10px'}}><span className="badge badge-blue">{l.action}</span></td>
+                  <td style={{padding:'8px 10px'}}>{l.resource_type} #{l.resource_id}</td>
+                  <td style={{padding:'8px 10px',color:'#94a3b8',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {tab==='profile'&&(
         <div style={{display:'flex',flexDirection:'column',gap:16,maxWidth:520}}>
+          {/* Password expiry warning */}
+          {user.password_expires_in_days!=null&&user.password_expires_in_days<=14&&(
+            <div style={{background:user.password_expires_in_days<=7?'#fef2f2':'#fffbeb',border:`1px solid ${user.password_expires_in_days<=7?'#fecaca':'#fde68a'}`,borderRadius:8,padding:'12px 16px',display:'flex',gap:10,alignItems:'center'}}>
+              <span style={{fontSize:20}}>{user.password_expires_in_days<=7?'🔴':'🟡'}</span>
+              <span style={{fontSize:14,fontWeight:500,color:user.password_expires_in_days<=7?'#dc2626':'#92400e'}}>
+                Your password expires in <b>{user.password_expires_in_days} day{user.password_expires_in_days!==1?'s':''}</b>. Please update it below.
+              </span>
+            </div>
+          )}
           {/* Password change */}
           <div className="card">
             <h3 style={{fontWeight:600,marginBottom:4}}>Change Password</h3>
@@ -3468,6 +3603,161 @@ function Settings({token,user}){
           <div style={{marginTop:20,padding:'14px 18px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:10,fontSize:13,color:'#92400e'}}>
             <b>⚠ Action Required:</b> These policies are effective as of today but require formal sign-off from the Privacy/Security Officer and Practice Administrator before they are legally operative. Download each document, obtain signatures, and file in a secure location. BAA execution (POL-HIPAA-006) should be prioritized immediately.
           </div>
+        </div>
+      )}
+
+      {tab==='training'&&user.role==='admin'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+            <div>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>Workforce Training Records</h2>
+              <p style={{fontSize:13,color:'#64748b',margin:'4px 0 0'}}>POL-HIPAA-001 — Document HIPAA training completion for all staff</p>
+            </div>
+          </div>
+
+          {!training&&<div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>}
+          {training&&(()=>{
+            const [addModal,setAddModal]=React.useState(null); // {userId, userName}
+            const [addForm,setAddForm]=React.useState({training_type:'hipaa_initial',training_name:'',completed_at:'',notes:''});
+            const [saving,setSaving]=React.useState(false);
+
+            const typeOptions=training.required_trainings||[];
+            const selectType=(type)=>{
+              const found=typeOptions.find(t=>t.type===type);
+              setAddForm(f=>({...f,training_type:type,training_name:found?found.name:''}));
+            };
+
+            const submitRecord=async e=>{
+              e.preventDefault();setSaving(true);
+              try{
+                await api('POST','/api/training-records',{
+                  user_id:addModal.userId,
+                  training_name:addForm.training_name,
+                  training_type:addForm.training_type,
+                  completed_at:addForm.completed_at,
+                  notes:addForm.notes,
+                },token);
+                toast('Training record added');
+                setAddModal(null);
+                reloadTraining();
+              }catch(e){toast(e.message,'error');}
+              setSaving(false);
+            };
+
+            const delRecord=async(id)=>{
+              if(!confirm('Delete this training record?'))return;
+              await api('DELETE',`/api/training-records/${id}`,null,token).catch(e=>toast(e.message,'error'));
+              reloadTraining();
+            };
+
+            // Coverage summary
+            const requiredTypes=training.required_trainings.map(t=>t.type);
+            const allStaff=training.staff||[];
+            const fullyTrained=allStaff.filter(s=>requiredTypes.every(rt=>s.records.some(r=>r.training_type===rt))).length;
+
+            return(
+              <div>
+                {/* Summary bar */}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
+                  {[
+                    ['Total Staff',allStaff.length,'#2563eb'],
+                    ['Fully Compliant',fullyTrained,'#16a34a'],
+                    ['Needs Training',allStaff.length-fullyTrained,allStaff.length-fullyTrained>0?'#dc2626':'#16a34a'],
+                  ].map(([l,v,c])=>(
+                    <div key={l} className="card" style={{textAlign:'center',padding:'14px 10px'}}>
+                      <div style={{fontSize:28,fontWeight:800,color:c}}>{v}</div>
+                      <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Staff rows */}
+                {allStaff.map(staff=>{
+                  const completedTypes=new Set(staff.records.map(r=>r.training_type));
+                  const missing=requiredTypes.filter(t=>!completedTypes.has(t));
+                  const compliant=missing.length===0;
+                  return(
+                    <div key={staff.user_id} className="card" style={{marginBottom:10,padding:'14px 16px'}}>
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:compliant?0:8}}>
+                        <div style={{display:'flex',alignItems:'center',gap:10}}>
+                          <span style={{fontSize:18}}>{compliant?'✅':'⚠️'}</span>
+                          <div>
+                            <div style={{fontWeight:600,fontSize:14}}>{staff.full_name}</div>
+                            <div style={{fontSize:12,color:'#64748b'}}>{staff.username} · {staff.role}</div>
+                          </div>
+                        </div>
+                        <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>{
+                          setAddModal({userId:staff.user_id,userName:staff.full_name});
+                          const t0=typeOptions[0];
+                          setAddForm({training_type:t0?.type||'hipaa_initial',training_name:t0?.name||'',completed_at:new Date().toISOString().slice(0,10),notes:''});
+                        }}>+ Add Record</button>
+                      </div>
+                      {/* Missing trainings */}
+                      {missing.length>0&&(
+                        <div style={{fontSize:12,color:'#dc2626',marginBottom:8}}>
+                          Missing: {missing.map(t=>typeOptions.find(x=>x.type===t)?.name||t).join(', ')}
+                        </div>
+                      )}
+                      {/* Existing records */}
+                      {staff.records.length>0&&(
+                        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginTop:6}}>
+                          <thead><tr style={{borderBottom:'1px solid #e2e8f0'}}>
+                            {['Training','Type','Completed','Notes',''].map(h=><th key={h} style={{padding:'4px 8px',textAlign:'left',color:'#475569'}}>{h}</th>)}
+                          </tr></thead>
+                          <tbody>{staff.records.map(r=>(
+                            <tr key={r.id} style={{borderBottom:'1px solid #f8fafc'}}>
+                              <td style={{padding:'4px 8px'}}>{r.training_name}</td>
+                              <td style={{padding:'4px 8px'}}><span className="badge badge-blue" style={{fontSize:10}}>{r.training_type}</span></td>
+                              <td style={{padding:'4px 8px',whiteSpace:'nowrap'}}>{r.completed_at?.slice(0,10)}</td>
+                              <td style={{padding:'4px 8px',color:'#94a3b8',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.notes||'—'}</td>
+                              <td style={{padding:'4px 8px'}}>
+                                <button style={{fontSize:11,color:'#dc2626',background:'none',border:'none',cursor:'pointer'}} onClick={()=>delRecord(r.id)}>✕</button>
+                              </td>
+                            </tr>
+                          ))}</tbody>
+                        </table>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Add record modal */}
+                {addModal&&(
+                  <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
+                    <div className="card" style={{width:480,maxWidth:'95vw'}}>
+                      <h3 style={{fontWeight:700,marginBottom:4}}>Add Training Record</h3>
+                      <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Staff member: <b>{addModal.userName}</b></p>
+                      <form onSubmit={submitRecord}>
+                        <div style={{marginBottom:12}}>
+                          <label className="label">Training Type</label>
+                          <select className="input" value={addForm.training_type} onChange={e=>selectType(e.target.value)}>
+                            {typeOptions.map(t=><option key={t.type} value={t.type}>{t.name}</option>)}
+                            <option value="custom">Custom / Other</option>
+                          </select>
+                        </div>
+                        <div style={{marginBottom:12}}>
+                          <label className="label">Training Name</label>
+                          <input className="input" value={addForm.training_name} onChange={e=>setAddForm({...addForm,training_name:e.target.value})} required/>
+                        </div>
+                        <div style={{marginBottom:12}}>
+                          <label className="label">Date Completed</label>
+                          <input className="input" type="date" value={addForm.completed_at} onChange={e=>setAddForm({...addForm,completed_at:e.target.value})} required/>
+                        </div>
+                        <div style={{marginBottom:16}}>
+                          <label className="label">Notes (optional)</label>
+                          <input className="input" value={addForm.notes} onChange={e=>setAddForm({...addForm,notes:e.target.value})} placeholder="e.g. online module, attestation on file"/>
+                        </div>
+                        <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                          <button type="button" className="btn btn-outline" onClick={()=>setAddModal(null)}>Cancel</button>
+                          <button type="submit" className="btn btn-primary" disabled={saving}>{saving?<Spinner/>:'Save Record'}</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
 
