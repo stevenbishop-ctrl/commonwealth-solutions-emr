@@ -153,6 +153,8 @@ class Membership(Base):
     billing_failure_count = Column(Integer, default=0)     # consecutive failures
     billing_status     = Column(String, default="ok")      # ok, past_due, suspended
     payment_provider   = Column(String, default="square")  # square or zaprite
+    billing_cycle      = Column(String, default="monthly")  # monthly | annual
+    price_annual       = Column(Float, nullable=True)       # actual annual amount charged
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

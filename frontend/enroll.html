@@ -944,6 +944,7 @@ By signing below, you acknowledge that:
             const [formData, setFormData] = useState({
                 // Step 1: Choose Plan
                 selectedPlanId: null,
+                billingCycle: 'monthly',
 
                 // Step 2: Your Information
                 firstName: '',
@@ -1170,6 +1171,7 @@ By signing below, you acknowledge that:
                                 insuranceMemberId: formData.insuranceMemberId,
                                 insuranceGroupId: formData.insuranceGroupId,
                                 selectedPlanId: formData.selectedPlanId,
+                                billing_cycle: formData.billingCycle,
                                 consents: {
                                     hipaa: formData.hipaaSignature,
                                     telehealth: formData.telehealthSignature,
@@ -1313,6 +1315,32 @@ By signing below, you acknowledge that:
                                 Select the membership plan that best fits your healthcare needs. All plans include unlimited office visits and direct access to our providers.
                             </div>
 
+                            {/* Billing cycle toggle */}
+                            <div style={{display:'flex',justifyContent:'center',marginBottom:24}}>
+                                <div style={{display:'inline-flex',background:'#f1f5f9',borderRadius:10,padding:4,gap:4}}>
+                                    {['monthly','annual'].map(cycle => {
+                                        const active = formData.billingCycle === cycle;
+                                        const hasAnnual = plans.some(p => p.price_annual > 0);
+                                        const monthlySavings = hasAnnual && cycle === 'annual'
+                                            ? plans.filter(p=>p.price_monthly>0&&p.price_annual>0)
+                                                   .map(p=>Math.round(((p.price_monthly*12-p.price_annual)/(p.price_monthly*12))*100))
+                                                   .filter(s=>s>0)[0]
+                                            : null;
+                                        return (
+                                            <button key={cycle} type="button"
+                                                style={{padding:'8px 20px',borderRadius:8,border:'none',cursor:'pointer',fontWeight:600,fontSize:14,
+                                                    background:active?'#fff':'transparent',color:active?'#1e3a5f':'#64748b',
+                                                    boxShadow:active?'0 1px 4px rgba(0,0,0,.1)':'none',transition:'all .15s'}}
+                                                onClick={()=>setFormData(prev=>({...prev,billingCycle:cycle}))}>
+                                                {cycle==='monthly'?'Monthly':(
+                                                    <span>Annual{monthlySavings?<span style={{marginLeft:6,background:'#dcfce7',color:'#15803d',fontSize:11,padding:'1px 6px',borderRadius:10,fontWeight:700}}>Save {monthlySavings}%</span>:''}</span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
                             {loading ? (
                                 <div style={{textAlign: 'center', padding: '40px'}}>
                                     <div className="loading"></div>
@@ -1321,27 +1349,53 @@ By signing below, you acknowledge that:
                             ) : (
                                 <div className="plans-grid">
                                     {plans.length > 0 ? (
-                                        plans.map(plan => (
-                                            <div
-                                                key={plan.id}
-                                                className={`plan-card ${formData.selectedPlanId === plan.id ? 'selected' : ''}`}
-                                                onClick={() => handlePlanSelect(plan.id)}
-                                            >
-                                                {plan.badge && (
-                                                    <div className="plan-badge">{plan.badge}</div>
-                                                )}
-                                                <div className="plan-name">{plan.name}</div>
-                                                <div className="plan-price">
-                                                    {(!plan.price_monthly || plan.price_monthly === 0) ? 'Contact for Pricing' : `$${Number(plan.price_monthly).toFixed(2)}`}
+                                        plans.map(plan => {
+                                            const isAnnual = formData.billingCycle === 'annual';
+                                            const hasAnnual = plan.price_annual > 0;
+                                            const displayPrice = isAnnual && hasAnnual ? plan.price_annual : plan.price_monthly;
+                                            const noPrice = !displayPrice || displayPrice === 0;
+                                            const annualSavings = hasAnnual && plan.price_monthly > 0
+                                                ? ((plan.price_monthly * 12) - plan.price_annual).toFixed(2)
+                                                : null;
+                                            return (
+                                                <div
+                                                    key={plan.id}
+                                                    className={`plan-card ${formData.selectedPlanId === plan.id ? 'selected' : ''}`}
+                                                    onClick={() => handlePlanSelect(plan.id)}
+                                                >
+                                                    {plan.badge && (
+                                                        <div className="plan-badge">{plan.badge}</div>
+                                                    )}
+                                                    <div className="plan-name">{plan.name}</div>
+                                                    <div className="plan-price">
+                                                        {noPrice ? 'Contact for Pricing' : `$${Number(displayPrice).toFixed(2)}`}
+                                                    </div>
+                                                    <div className="plan-price-note">
+                                                        {isAnnual && hasAnnual ? 'per year' : 'per month'}
+                                                    </div>
+                                                    {isAnnual && hasAnnual && plan.price_monthly > 0 && (
+                                                        <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>
+                                                            ${Number(plan.price_monthly).toFixed(2)}/mo if paid monthly
+                                                        </div>
+                                                    )}
+                                                    {isAnnual && annualSavings > 0 && (
+                                                        <div style={{fontSize:12,fontWeight:600,color:'#16a34a',marginBottom:8}}>
+                                                            💰 Save ${annualSavings}/year
+                                                        </div>
+                                                    )}
+                                                    {!isAnnual && hasAnnual && plan.price_annual > 0 && (
+                                                        <div style={{fontSize:12,color:'#64748b',marginBottom:4}}>
+                                                            ${Number(plan.price_annual).toFixed(2)}/yr if paid annually
+                                                        </div>
+                                                    )}
+                                                    <ul className="plan-features">
+                                                        {(plan.features || []).map((feature, idx) => (
+                                                            <li key={idx}>{feature}</li>
+                                                        ))}
+                                                    </ul>
                                                 </div>
-                                                <div className="plan-price-note">per month</div>
-                                                <ul className="plan-features">
-                                                    {(plan.features || []).map((feature, idx) => (
-                                                        <li key={idx}>{feature}</li>
-                                                    ))}
-                                                </ul>
-                                            </div>
-                                        ))
+                                            );
+                                        })
                                     ) : (
                                         <div style={{gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: '#999'}}>
                                             No plans available at this time.
@@ -1939,13 +1993,29 @@ By signing below, you acknowledge that:
                             <h2 className="step-title">Select Payment Method</h2>
 
                             <div className="form-section">
-                                <div className="form-section-title">Monthly Membership Fee</div>
-                                {selectedPlan && (
-                                    <div className="info-box">
-                                        <strong>{selectedPlan.name}</strong><br/>
-                                        Amount: ${(!selectedPlan.price_monthly || selectedPlan.price_monthly === 0) ? 'Contact for Pricing' : Number(selectedPlan.price_monthly).toFixed(2)}/month
-                                    </div>
-                                )}
+                                <div className="form-section-title">Membership Fee</div>
+                                {selectedPlan && (() => {
+                                    const isAnnual = formData.billingCycle === 'annual';
+                                    const amt = isAnnual && selectedPlan.price_annual > 0
+                                        ? selectedPlan.price_annual
+                                        : selectedPlan.price_monthly;
+                                    const noPrice = !amt || amt === 0;
+                                    return (
+                                        <div className="info-box">
+                                            <strong>{selectedPlan.name}</strong>
+                                            <span style={{marginLeft:8,fontSize:12,background:isAnnual?'#dcfce7':'#dbeafe',color:isAnnual?'#15803d':'#1d4ed8',padding:'2px 8px',borderRadius:10,fontWeight:600}}>
+                                                {isAnnual ? 'Annual' : 'Monthly'}
+                                            </span>
+                                            <br/>
+                                            Amount: {noPrice ? 'Contact for Pricing' : `$${Number(amt).toFixed(2)} ${isAnnual ? 'per year' : 'per month'}`}
+                                            {isAnnual && selectedPlan.price_monthly > 0 && selectedPlan.price_annual > 0 && (
+                                                <span style={{marginLeft:8,fontSize:12,color:'#16a34a',fontWeight:600}}>
+                                                    (Save ${((selectedPlan.price_monthly * 12) - selectedPlan.price_annual).toFixed(2)} vs monthly)
+                                                </span>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             <div className="form-section">

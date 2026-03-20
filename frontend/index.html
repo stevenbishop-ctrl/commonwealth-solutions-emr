@@ -4116,11 +4116,22 @@ function PlanEditor({plan,onChange,onSave,onCancel}){
   const setField=(k,v)=>onChange(prev=>({...prev,[k]:v}));
   return(
     <div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,marginBottom:12}}>
         <div>
           <label className="label">Monthly Price ($)</label>
           <input className="input" type="number" step="0.01" min="0" value={plan.price_monthly||''}
             onChange={e=>setField('price_monthly',parseFloat(e.target.value)||0)}/>
+        </div>
+        <div>
+          <label className="label">Annual Price ($)</label>
+          <input className="input" type="number" step="0.01" min="0" value={plan.price_annual||''}
+            placeholder={plan.price_monthly?(plan.price_monthly*10).toFixed(2):''}
+            onChange={e=>setField('price_annual',parseFloat(e.target.value)||null)}/>
+          {plan.price_monthly>0&&plan.price_annual>0&&(
+            <div style={{fontSize:11,color:'#16a34a',marginTop:3}}>
+              Saves ${((plan.price_monthly*12)-plan.price_annual).toFixed(2)}/yr vs monthly
+            </div>
+          )}
         </div>
         <div>
           <label className="label">Enrollment Fee ($)</label>

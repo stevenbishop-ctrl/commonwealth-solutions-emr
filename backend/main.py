@@ -4050,6 +4050,9 @@ def _migrate_add_billing_columns(db: Session):
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS results_received_at TIMESTAMP",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_notes TEXT DEFAULT ''",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_path VARCHAR DEFAULT ''",
+        # Membership billing cycle
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS billing_cycle VARCHAR DEFAULT 'monthly'",
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS price_annual FLOAT",
         # Patient portal
         "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_email VARCHAR DEFAULT ''",
         "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_password_hash VARCHAR DEFAULT ''",
@@ -4617,14 +4620,19 @@ def approve_enrollment(
     ).first() if enroll.plan_id else None
     if plan:
         start_now = datetime.utcnow()
+        billing_cycle = data.get("billing_cycle", "monthly") if isinstance(data, dict) else "monthly"
+        is_annual = billing_cycle == "annual"
+        next_date = start_now.replace(year=start_now.year + 1) if is_annual else _next_anniversary(start_now)
         mem = models.Membership(
             patient_id        = pt.id,
             plan_name         = plan.name,
             price_monthly     = plan.price_monthly,
+            price_annual      = plan.price_annual,
+            billing_cycle     = billing_cycle,
             start_date        = start_now,
             status            = "active",
             payment_provider  = enroll.payment_method or "square",
-            next_billing_date = _next_anniversary(start_now),
+            next_billing_date = next_date,
             billing_status    = "ok",
         )
         db.add(mem)
@@ -4826,17 +4834,25 @@ def process_monthly_billing(db: Session):
             results["skipped"] += 1
             continue
 
+        # Determine billing cycle and amount
+        is_annual = getattr(mem, "billing_cycle", "monthly") == "annual"
+        if is_annual:
+            billing_amount = mem.price_annual or (mem.price_monthly * 12 if mem.price_monthly else 0)
+        else:
+            billing_amount = mem.price_monthly or 0
+
         # Skip $0 plans (free / contact-for-pricing)
-        if not mem.price_monthly or mem.price_monthly <= 0:
-            # Advance next_billing_date without charging
-            mem.next_billing_date = _next_anniversary(mem.next_billing_date)
+        if not billing_amount or billing_amount <= 0:
+            cur = mem.next_billing_date
+            mem.next_billing_date = cur.replace(year=cur.year + 1) if is_annual else _next_anniversary(cur)
             db.commit()
             results["skipped"] += 1
             continue
 
         results["attempted"] += 1
-        amount_cents = int(round(mem.price_monthly * 100))
-        note = f"Valiant DPC — {mem.plan_name} membership ({today.strftime('%B %Y')})"
+        amount_cents = int(round(billing_amount * 100))
+        period = today.strftime('%Y') if is_annual else today.strftime('%B %Y')
+        note = f"Valiant DPC — {mem.plan_name} membership ({period})"
         provider = mem.payment_provider or "square"
 
         try:
@@ -4848,7 +4864,7 @@ def process_monthly_billing(db: Session):
                 )
                 pay = models.Payment(
                     patient_id=mem.patient_id,
-                    amount=mem.price_monthly,
+                    amount=billing_amount,
                     description=note,
                     payment_method="square_card",
                     status="completed",
@@ -4858,13 +4874,12 @@ def process_monthly_billing(db: Session):
                 checkout = _zaprite_charge(mem, patient, note)
                 pay = models.Payment(
                     patient_id=mem.patient_id,
-                    amount=mem.price_monthly,
+                    amount=billing_amount,
                     description=note,
                     payment_method="zaprite",
                     status="pending",
                     payment_ref_id=checkout.get("id", ""),
                 )
-                # Log the checkout URL so staff can follow up if needed
                 logging.info(
                     f"Zaprite checkout for membership {mem.id}: {checkout.get('url', '')}"
                 )
@@ -4872,11 +4887,12 @@ def process_monthly_billing(db: Session):
             db.add(pay)
 
             # Success — reset failure count, advance next billing date
+            cur = mem.next_billing_date
             mem.last_billed_at        = now
             mem.billing_failure_count = 0
             mem.billing_status        = "ok"
             mem.status                = "active"
-            mem.next_billing_date     = _next_anniversary(mem.next_billing_date)
+            mem.next_billing_date     = cur.replace(year=cur.year + 1) if is_annual else _next_anniversary(cur)
             db.commit()
             audit(db, 0, "BILLING_SUCCESS", "Membership", str(mem.id))
             results["succeeded"] += 1
