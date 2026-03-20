@@ -799,10 +799,28 @@ function PatientChart({token,patient,onBack,user}){
     <div>
       <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
         <button className="btn btn-outline" onClick={onBack}>← Back</button>
-        <div>
+        <div style={{flex:1}}>
           <h1 style={{fontSize:22,fontWeight:700,color:'#1e293b'}}>{patient.first_name} {patient.last_name}</h1>
           <p style={{fontSize:13,color:'#64748b'}}>DOB: {patient.dob} · {patient.phone} · {patient.insurance_name}</p>
         </div>
+        {(user.role==='admin'||user.role==='physician')&&(
+          <button className="btn btn-outline" title="Export complete patient records (HIPAA Right of Access)" onClick={()=>{
+            fetch(`/api/patients/${patient.id}/export`,{headers:{Authorization:`Bearer ${token}`}})
+              .then(r=>{
+                const cd=r.headers.get('Content-Disposition')||'';
+                const fname=cd.match(/filename="([^"]+)"/)?.[1]||`patient_${patient.id}_records.json`;
+                return r.blob().then(b=>({b,fname}));
+              })
+              .then(({b,fname})=>{
+                const url=URL.createObjectURL(b);
+                const a=document.createElement('a');
+                a.href=url; a.download=fname; a.click();
+                URL.revokeObjectURL(url);
+              });
+          }} style={{whiteSpace:'nowrap'}}>
+            ⬇ Export Records
+          </button>
+        )}
       </div>
 
       <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16,overflowX:'auto'}}>

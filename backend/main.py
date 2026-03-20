@@ -954,6 +954,7 @@ def update_patient(
 
 @app.get("/api/patients/{patient_id}/medications")
 def list_medications(patient_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    audit(db, current_user.id, "VIEW_MEDICATIONS", "Patient", str(patient_id))
     return db.query(models.PatientMedication).filter(
         models.PatientMedication.patient_id == patient_id
     ).order_by(models.PatientMedication.is_active.desc(), models.PatientMedication.name).all()
@@ -1000,6 +1001,7 @@ def delete_medication(med_id: int, db: Session = Depends(get_db), current_user: 
 
 @app.get("/api/patients/{patient_id}/history")
 def list_history(patient_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    audit(db, current_user.id, "VIEW_HISTORY", "Patient", str(patient_id))
     return db.query(models.PatientHistoryEntry).filter(
         models.PatientHistoryEntry.patient_id == patient_id
     ).order_by(models.PatientHistoryEntry.entry_type, models.PatientHistoryEntry.created_at).all()
@@ -1049,6 +1051,7 @@ def list_notes(
     q = db.query(models.ClinicalNote)
     if patient_id:
         q = q.filter(models.ClinicalNote.patient_id == patient_id)
+        audit(db, current_user.id, "VIEW_NOTES", "Patient", str(patient_id))
     rows = q.order_by(models.ClinicalNote.created_at.desc()).all()
     return [clean(n) for n in rows]
 
@@ -1370,6 +1373,7 @@ def list_lab_orders(
     q = db.query(models.LabOrder)
     if patient_id:
         q = q.filter(models.LabOrder.patient_id == patient_id)
+        audit(db, current_user.id, "VIEW_LAB_ORDERS", "Patient", str(patient_id))
     return [clean(o) for o in q.order_by(models.LabOrder.created_at.desc()).all()]
 
 
@@ -1745,6 +1749,7 @@ def list_imaging_orders(
     q = db.query(models.ImagingOrder)
     if patient_id:
         q = q.filter(models.ImagingOrder.patient_id == patient_id)
+        audit(db, current_user.id, "VIEW_IMAGING_ORDERS", "Patient", str(patient_id))
     return [clean(o) for o in q.order_by(models.ImagingOrder.created_at.desc()).all()]
 
 
@@ -3550,6 +3555,7 @@ def list_prescriptions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    audit(db, current_user.id, "VIEW_PRESCRIPTIONS", "Patient", str(patient_id))
     rxs = (db.query(models.Prescription)
            .filter(models.Prescription.patient_id == patient_id)
            .order_by(models.Prescription.created_at.desc())
@@ -4342,6 +4348,7 @@ def portal_me(patient: models.Patient = Depends(get_portal_patient)):
 
 @app.get("/portal/notes")
 def portal_notes(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    audit(db, None, "PORTAL_VIEW_NOTES", "Patient", str(patient.id), details=f"patient_id={patient.id}")
     notes = (db.query(models.ClinicalNote)
              .filter(models.ClinicalNote.patient_id == patient.id,
                      models.ClinicalNote.patient_visible == True)
@@ -4364,6 +4371,7 @@ def portal_notes(patient: models.Patient = Depends(get_portal_patient), db: Sess
 
 @app.get("/portal/labs")
 def portal_labs(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    audit(db, None, "PORTAL_VIEW_LABS", "Patient", str(patient.id), details=f"patient_id={patient.id}")
     orders = (db.query(models.LabOrder)
               .filter(models.LabOrder.patient_id == patient.id,
                       models.LabOrder.status == "resulted")
@@ -4391,6 +4399,7 @@ def portal_labs(patient: models.Patient = Depends(get_portal_patient), db: Sessi
 
 @app.get("/portal/imaging")
 def portal_imaging(patient: models.Patient = Depends(get_portal_patient), db: Session = Depends(get_db)):
+    audit(db, None, "PORTAL_VIEW_IMAGING", "Patient", str(patient.id), details=f"patient_id={patient.id}")
     orders = (db.query(models.ImagingOrder)
               .filter(models.ImagingOrder.patient_id == patient.id,
                       models.ImagingOrder.status.in_(["results_received", "completed"]))
@@ -4504,6 +4513,154 @@ def toggle_note_visibility(
     db.commit()
     audit(db, current_user.id, "TOGGLE_NOTE_VISIBILITY", "ClinicalNote", str(note_id))
     return clean(note)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATIENT DATA EXPORT  (HIPAA Right of Access — 45 C.F.R. § 164.524)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _build_patient_export(patient_id: int, db: Session) -> dict:
+    """Assemble a complete ePHI bundle for one patient."""
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    p = clean(patient)
+    # Strip internal/portal credential fields from the export
+    for field in ("portal_password_hash", "portal_email", "portal_active"):
+        p.pop(field, None)
+
+    notes = [clean(n) for n in
+             db.query(models.ClinicalNote)
+             .filter(models.ClinicalNote.patient_id == patient_id)
+             .order_by(models.ClinicalNote.visit_date.desc()).all()]
+
+    lab_orders = []
+    for o in (db.query(models.LabOrder)
+              .filter(models.LabOrder.patient_id == patient_id)
+              .order_by(models.LabOrder.created_at.desc()).all()):
+        d = clean(o)
+        try:
+            d["observations"] = json.loads(o.result_data or "[]")
+        except Exception:
+            d["observations"] = []
+        d.pop("result_data", None)
+        d.pop("result_pdf", None)
+        lab_orders.append(d)
+
+    imaging_orders = []
+    for o in (db.query(models.ImagingOrder)
+              .filter(models.ImagingOrder.patient_id == patient_id)
+              .order_by(models.ImagingOrder.created_at.desc()).all()):
+        d = clean(o)
+        d.pop("result_file_data", None)  # exclude raw binary blob
+        imaging_orders.append(d)
+
+    prescriptions = [
+        _rx_to_dict(rx, db) for rx in
+        (db.query(models.Prescription)
+         .filter(models.Prescription.patient_id == patient_id)
+         .order_by(models.Prescription.created_at.desc()).all())
+    ]
+
+    medications = [clean(m) for m in
+                   (db.query(models.PatientMedication)
+                    .filter(models.PatientMedication.patient_id == patient_id)
+                    .order_by(models.PatientMedication.is_active.desc()).all())]
+
+    history = [clean(e) for e in
+               (db.query(models.PatientHistoryEntry)
+                .filter(models.PatientHistoryEntry.patient_id == patient_id)
+                .order_by(models.PatientHistoryEntry.entry_type).all())]
+
+    appointments = [clean(a) for a in
+                    (db.query(models.Appointment)
+                     .filter(models.Appointment.patient_id == patient_id)
+                     .order_by(models.Appointment.start_time.desc()).all())]
+
+    memberships = []
+    for m in (db.query(models.Membership)
+              .filter(models.Membership.patient_id == patient_id)
+              .order_by(models.Membership.created_at.desc()).all()):
+        d = clean(m)
+        d.pop("square_customer_id", None)
+        d.pop("square_card_id", None)
+        memberships.append(d)
+
+    payments = []
+    for pay in (db.query(models.Payment)
+                .filter(models.Payment.patient_id == patient_id)
+                .order_by(models.Payment.created_at.desc()).all()):
+        d = clean(pay)
+        d.pop("payment_ref_id", None)
+        payments.append(d)
+
+    consents = [clean(c) for c in
+                (db.query(models.PatientConsent)
+                 .filter(models.PatientConsent.patient_id == patient_id)
+                 .order_by(models.PatientConsent.signed_at.asc()).all())]
+
+    return {
+        "export_generated_at": datetime.utcnow().isoformat() + "Z",
+        "hipaa_notice": (
+            "This record was produced pursuant to the HIPAA Right of Access "
+            "(45 C.F.R. § 164.524). It contains Protected Health Information (PHI) "
+            "and must be safeguarded accordingly."
+        ),
+        "patient": p,
+        "clinical_notes": notes,
+        "lab_orders": lab_orders,
+        "imaging_orders": imaging_orders,
+        "prescriptions": prescriptions,
+        "medications": medications,
+        "medical_history": history,
+        "appointments": appointments,
+        "memberships": memberships,
+        "payments": payments,
+        "consents": consents,
+    }
+
+
+@app.get("/api/patients/{patient_id}/export")
+def export_patient_records(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    HIPAA Right of Access — staff-initiated full export of a patient's ePHI.
+    Physician or admin only.  Every export is audit-logged.
+    """
+    if current_user.role not in ("admin", "physician"):
+        raise HTTPException(status_code=403, detail="Physician or admin required")
+    data = _build_patient_export(patient_id, db)
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    fname = f"{patient.last_name}_{patient.first_name}_records_{datetime.utcnow().strftime('%Y%m%d')}.json"
+    audit(db, current_user.id, "EXPORT_PATIENT_RECORDS", "Patient", str(patient_id),
+          details="HIPAA Right of Access export")
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.get("/portal/export")
+def portal_export_records(
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """
+    HIPAA Right of Access — patient self-service export from the portal.
+    Returns the patient's own complete record bundle as a downloadable JSON file.
+    """
+    data = _build_patient_export(patient.id, db)
+    fname = f"my_health_records_{datetime.utcnow().strftime('%Y%m%d')}.json"
+    audit(db, None, "PORTAL_EXPORT_RECORDS", "Patient", str(patient.id),
+          details="Patient self-service Right of Access export")
+    return JSONResponse(
+        content=data,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @app.get("/portal")

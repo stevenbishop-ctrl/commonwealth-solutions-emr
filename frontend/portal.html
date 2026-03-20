@@ -134,8 +134,25 @@ function Header({patient, onLogout}) {
           <div style={{fontSize:11,opacity:.7}}>Patient Portal</div>
         </div>
       </div>
-      <div style={{display:'flex',alignItems:'center',gap:16}}>
+      <div style={{display:'flex',alignItems:'center',gap:12}}>
         <span style={{fontSize:14,opacity:.85}}>Hello, {patient?.first_name || 'Patient'}</span>
+        <button className="btn btn-sm" title="Download a copy of all your health records (HIPAA Right of Access)"
+          onClick={()=>{
+            api('GET','/portal/export',null,token)
+              .then(data=>{
+                const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+                const url=URL.createObjectURL(blob);
+                const a=document.createElement('a');
+                a.href=url;
+                a.download=`my_health_records_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              })
+              .catch(()=>alert('Unable to export records. Please try again.'));
+          }}
+          style={{background:'rgba(255,255,255,.15)',color:'#fff',border:'1px solid rgba(255,255,255,.3)'}}>
+          ⬇ My Records
+        </button>
         <button className="btn btn-sm" onClick={onLogout}
           style={{background:'rgba(255,255,255,.15)',color:'#fff',border:'1px solid rgba(255,255,255,.3)'}}>Sign Out</button>
       </div>
