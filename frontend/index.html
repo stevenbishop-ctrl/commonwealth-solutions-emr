@@ -1410,12 +1410,97 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
   );
 }
 
+function ICD10Search({selected, onChange}){
+  const [query,setQuery]=useState('');
+  const [results,setResults]=useState([]);
+  const [searching,setSearching]=useState(false);
+  const [showDrop,setShowDrop]=useState(false);
+  const ref=useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(()=>{
+    const handler=e=>{if(ref.current&&!ref.current.contains(e.target))setShowDrop(false);};
+    document.addEventListener('mousedown',handler);
+    return()=>document.removeEventListener('mousedown',handler);
+  },[]);
+
+  useEffect(()=>{
+    if(query.length<2){setResults([]);setShowDrop(false);return;}
+    const timer=setTimeout(async()=>{
+      setSearching(true);
+      try{
+        const r=await fetch(`https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search?terms=${encodeURIComponent(query)}&maxList=10`);
+        const data=await r.json();
+        // data[3] = [[code, description], ...]
+        const hits=(data[3]||[]).map(([code,desc])=>({code,desc}));
+        setResults(hits);
+        setShowDrop(hits.length>0);
+      }catch(e){setResults([]);}
+      setSearching(false);
+    },250);
+    return()=>clearTimeout(timer);
+  },[query]);
+
+  const add=item=>{
+    if(!selected.find(s=>s.code===item.code)){
+      onChange([...selected,item]);
+    }
+    setQuery('');setResults([]);setShowDrop(false);
+  };
+
+  const remove=code=>onChange(selected.filter(s=>s.code!==code));
+
+  return(
+    <div ref={ref}>
+      {/* Selected tags */}
+      {selected.length>0&&(
+        <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:6}}>
+          {selected.map(s=>(
+            <span key={s.code} style={{display:'inline-flex',alignItems:'center',gap:4,background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:4,padding:'2px 8px',fontSize:12,color:'#1d4ed8'}}>
+              <b>{s.code}</b> {s.desc}
+              <button type="button" onClick={()=>remove(s.code)} style={{background:'none',border:'none',cursor:'pointer',color:'#93c5fd',fontSize:14,lineHeight:1,padding:'0 0 0 2px'}}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      {/* Search input */}
+      <div style={{position:'relative'}}>
+        <input
+          className="input"
+          value={query}
+          onChange={e=>setQuery(e.target.value)}
+          onFocus={()=>results.length>0&&setShowDrop(true)}
+          placeholder="Type diagnosis name or ICD-10 code…"
+          autoComplete="off"
+        />
+        {searching&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#94a3b8'}}>searching…</span>}
+        {showDrop&&(
+          <div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #e2e8f0',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:100,maxHeight:220,overflowY:'auto'}}>
+            {results.map(item=>(
+              <div key={item.code}
+                onMouseDown={e=>{e.preventDefault();add(item);}}
+                style={{padding:'8px 12px',cursor:'pointer',borderBottom:'1px solid #f1f5f9',fontSize:13}}
+                onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
+                onMouseLeave={e=>e.currentTarget.style.background='white'}
+              >
+                <span style={{fontWeight:700,color:'#2563eb',marginRight:8}}>{item.code}</span>
+                <span style={{color:'#374151'}}>{item.desc}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ImagingOrderForm({token,patient,onSave,onCancel}){
   const toast=useToast();
   const [form,setForm]=useState({study_type:'',body_part:'',clinical_indication:'',priority:'routine',facility:'',fax_number:'',cpt_code:'',notes:''});
+  const [icd10,setIcd10]=useState([]);
   const [saving,setSaving]=useState(false);
   const submit=async e=>{e.preventDefault();setSaving(true);
-    try{const d=await api('POST','/api/imaging-orders',{...form,patient_id:patient.id},token);if(d){toast('Imaging order created');onSave(d);}}
+    try{const d=await api('POST','/api/imaging-orders',{...form,icd10_codes:icd10.map(i=>i.code),patient_id:patient.id},token);if(d){toast('Imaging order created');onSave(d);}}
     catch(e){toast(e.message,'error');}setSaving(false);};
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
@@ -1430,6 +1515,10 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
           <div><label className="label">Facility Name</label><input className="input" value={form.facility} onChange={s('facility')}/></div>
           <div><label className="label">Facility Fax #</label><input className="input" value={form.fax_number} onChange={s('fax_number')} placeholder="+15551234567"/></div>
           <div style={{gridColumn:'span 2'}}><label className="label">Clinical Indication *</label><input className="input" value={form.clinical_indication} onChange={s('clinical_indication')} placeholder="Reason for exam, relevant history…" required/></div>
+          <div style={{gridColumn:'span 2'}}>
+            <label className="label">ICD-10 Diagnosis Codes</label>
+            <ICD10Search selected={icd10} onChange={setIcd10}/>
+          </div>
           <div style={{gridColumn:'span 2'}}><label className="label">Special Instructions</label><textarea className="input" rows={2} value={form.notes} onChange={s('notes')} placeholder="Contrast, patient prep, urgency notes…"/></div>
         </div>
         <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Order'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
