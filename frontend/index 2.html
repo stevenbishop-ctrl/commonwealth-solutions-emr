@@ -1,0 +1,2998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MedFlow EMR</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Square Web Payments SDK loaded dynamically per environment (sandbox vs production) -->
+<style>
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:#f1f5f9;}
+  .sidebar-item{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:8px;cursor:pointer;color:#94a3b8;font-size:14px;font-weight:500;transition:all .15s;}
+  .sidebar-item:hover{background:#1e3a5f;color:#fff;}
+  .sidebar-item.active{background:#2563eb;color:#fff;}
+  .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:24px;}
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;border:none;}
+  .btn-primary{background:#2563eb;color:#fff;} .btn-primary:hover{background:#1d4ed8;}
+  .btn-secondary{background:#f1f5f9;color:#475569;} .btn-secondary:hover{background:#e2e8f0;}
+  .btn-success{background:#16a34a;color:#fff;} .btn-success:hover{background:#15803d;}
+  .btn-danger{background:#dc2626;color:#fff;} .btn-danger:hover{background:#b91c1c;}
+  .btn-warning{background:#d97706;color:#fff;} .btn-warning:hover{background:#b45309;}
+  .btn-outline{background:transparent;border:1px solid #cbd5e1;color:#475569;} .btn-outline:hover{background:#f8fafc;}
+  .input{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;transition:border .15s;}
+  .input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1);}
+  .label{display:block;font-size:13px;font-weight:500;color:#374151;margin-bottom:4px;}
+  .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:500;}
+  .badge-blue{background:#dbeafe;color:#1d4ed8;} .badge-green{background:#dcfce7;color:#15803d;}
+  .badge-red{background:#fee2e2;color:#dc2626;} .badge-yellow{background:#fef9c3;color:#854d0e;}
+  .badge-gray{background:#f1f5f9;color:#475569;}
+  .tab{padding:8px 16px;font-size:14px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:#6b7280;}
+  .tab.active{border-bottom-color:#2563eb;color:#2563eb;}
+  .table-row:hover{background:#f8fafc;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px;}
+  .modal{background:#fff;border-radius:16px;max-height:90vh;overflow-y:auto;width:100%;max-width:680px;box-shadow:0 20px 60px rgba(0,0,0,.2);}
+  .toast{position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;z-index:2000;animation:slideUp .3s ease;}
+  @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  .spinner{border:3px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;width:20px;height:20px;animation:spin .6s linear infinite;display:inline-block;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  textarea.input{min-height:80px;resize:vertical;}
+  select.input{background:#fff;}
+  @media(max-width:768px){.sidebar{transform:translateX(-100%);position:fixed;z-index:500;height:100vh;} .sidebar.open{transform:translateX(0);} .main-content{margin-left:0!important;}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef,createContext,useContext} = React;
+
+// ── API base ──────────────────────────────────────────────────────────────────
+// file://, localhost, or 127.0.0.1 → connect to local backend on port 8000
+const API = (window.location.protocol === 'file:' ||
+             window.location.hostname === 'localhost' ||
+             window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:8000'
+  : '';
+
+async function api(method,path,body,token){
+  const headers={'Content-Type':'application/json'};
+  if(token) headers['Authorization']=`Bearer ${token}`;
+  const opts={method,headers};
+  if(body && method!=='GET') opts.body=JSON.stringify(body);
+  const r=await fetch(API+path,opts);
+  if(r.status===401){window.dispatchEvent(new Event('auth-expired'));return null;}
+  if(!r.ok){const e=await r.json().catch(()=>({detail:'Error'}));throw new Error(e.detail||'Request failed');}
+  if(r.headers.get('content-type')?.includes('application/pdf')) return r.blob();
+  return r.json();
+}
+
+// ── Auth context ──────────────────────────────────────────────────────────────
+const Auth=createContext(null);
+function useAuth(){return useContext(Auth);}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+const ToastCtx=createContext(null);
+function ToastProvider({children}){
+  const [toasts,setToasts]=useState([]);
+  const show=useCallback((msg,type='success')=>{
+    const id=Date.now();
+    setToasts(t=>[...t,{id,msg,type}]);
+    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3500);
+  },[]);
+  return(
+    <ToastCtx.Provider value={show}>
+      {children}
+      <div style={{position:'fixed',bottom:24,right:24,zIndex:2000,display:'flex',flexDirection:'column',gap:8}}>
+        {toasts.map(t=>(
+          <div key={t.id} className="toast" style={{background:t.type==='error'?'#dc2626':t.type==='warning'?'#d97706':'#1e293b'}}>
+            {t.msg}
+          </div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+const useToast=()=>useContext(ToastCtx);
+
+// ── Icons (inline SVG) ────────────────────────────────────────────────────────
+const Icon=({name,size=18,cls=''})=>{
+  const icons={
+    home:<><rect x="3" y="9" width="18" height="13" rx="1"/><polyline points="9 22 9 12 15 12 15 22"/><polyline points="2 10 12 2 22 10"/></>,
+    users:<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+    file:<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></>,
+    lab:<><path d="M9 3H5a2 2 0 0 0-2 2v4"/><path d="M9 3h6"/><path d="M15 3h4a2 2 0 0 1 2 2v4"/><path d="M3 9v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9"/><path d="M9 12h6"/><path d="M9 16h6"/></>,
+    xray:<><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8"/><path d="M12 8v8"/></>,
+    fax:<><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></>,
+    payment:<><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></>,
+    settings:<><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 4.93l1.41 1.41M19.07 19.07l-1.41-1.41M4.93 19.07l1.41-1.41M12 2v2M12 20v2M2 12H0M22 12h2"/></>,
+    logout:<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+    plus:<><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></>,
+    search:<><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></>,
+    edit:<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
+    pdf:<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h1a1 1 0 1 1 0 2H9v-2z"/><path d="M14 13h.5a1.5 1.5 0 0 1 0 3H14v-3z"/></>,
+    robot:<><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M12 2a2 2 0 0 1 2 2v1H10V4a2 2 0 0 1 2-2z"/><line x1="9" y1="15" x2="9.01" y2="15"/><line x1="15" y1="15" x2="15.01" y2="15"/><path d="M8 11V7"/><path d="M16 11V7"/></>,
+    send:<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>,
+    check:<><polyline points="20 6 9 17 4 12"/></>,
+    x:<><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></>,
+    chevron:<><polyline points="9 18 15 12 9 6"/></>,
+    menu:<><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></>,
+    shield:<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+    star:<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></>,
+    calendar:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+    clipboard:<><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></>,
+  };
+  return(
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cls}>
+      {icons[name]||null}
+    </svg>
+  );
+};
+
+// ── Spinner ───────────────────────────────────────────────────────────────────
+const Spinner=()=><span className="spinner"/>;
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function Modal({title,onClose,children,wide=false}){
+  return(
+    <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div className="modal" style={{maxWidth:wide?900:680}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'20px 24px',borderBottom:'1px solid #e2e8f0'}}>
+          <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>{title}</h2>
+          <button onClick={onClose} className="btn btn-secondary" style={{padding:'4px 8px'}}><Icon name="x" size={16}/></button>
+        </div>
+        <div style={{padding:24}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Form field helper ─────────────────────────────────────────────────────────
+function Field({label,children,required=false}){
+  return(
+    <div>
+      <label className="label">{label}{required&&<span style={{color:'#dc2626'}}> *</span>}</label>
+      {children}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LOGIN PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+function LoginPage({onLogin}){
+  const [form,setForm]=useState({username:'',password:''});
+  const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState('');
+
+  const submit=async e=>{
+    e.preventDefault();
+    setLoading(true);setErr('');
+    try{
+      const fd=new FormData();
+      fd.append('username',form.username);
+      fd.append('password',form.password);
+      const r=await fetch(API+'/api/auth/login',{method:'POST',body:fd});
+      if(!r.ok){const e=await r.json();throw new Error(e.detail);}
+      const data=await r.json();
+      onLogin(data.access_token,data.user);
+    }catch(e){setErr(e.message||'Login failed');}
+    finally{setLoading(false);}
+  };
+
+  return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%)'}}>
+      <div style={{background:'#fff',borderRadius:20,padding:40,width:'100%',maxWidth:420,boxShadow:'0 25px 60px rgba(0,0,0,.3)'}}>
+        <div style={{textAlign:'center',marginBottom:32}}>
+          <div style={{width:60,height:60,background:'#dbeafe',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+            <Icon name="shield" size={32} cls="" style={{color:'#2563eb'}}/>
+          </div>
+          <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>MedFlow EMR</h1>
+          <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
+        </div>
+        {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
+        <form onSubmit={submit}>
+          <div style={{marginBottom:16}}>
+            <label className="label">Username</label>
+            <input className="input" value={form.username} onChange={e=>setForm({...form,username:e.target.value})} placeholder="username" required/>
+          </div>
+          <div style={{marginBottom:24}}>
+            <label className="label">Password</label>
+            <input className="input" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} placeholder="password" required/>
+          </div>
+          <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',padding:'11px'}} disabled={loading}>
+            {loading?<Spinner/>:'Sign In'}
+          </button>
+        </form>
+        <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:24}}>
+          HIPAA-compliant • All access is logged • 256-bit JWT auth
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+function Dashboard({token}){
+  const [stats,setStats]=useState(null);
+  const toast=useToast();
+
+  useEffect(()=>{
+    api('GET','/api/dashboard/stats',null,token).then(s=>s&&setStats(s)).catch(()=>{});
+  },[token]);
+
+  const cards=[
+    {label:'Total Patients',key:'total_patients',icon:'users',color:'#2563eb',bg:'#dbeafe'},
+    {label:'Notes Today',key:'notes_today',icon:'file',color:'#16a34a',bg:'#dcfce7'},
+    {label:'Pending Labs',key:'pending_lab_orders',icon:'lab',color:'#d97706',bg:'#fef9c3'},
+    {label:'Active Memberships',key:'active_memberships',icon:'star',color:'#7c3aed',bg:'#ede9fe'},
+  ];
+
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:24}}>Dashboard</h1>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:16,marginBottom:24}}>
+        {cards.map(c=>(
+          <div key={c.key} className="card" style={{display:'flex',alignItems:'center',gap:16}}>
+            <div style={{width:48,height:48,borderRadius:12,background:c.bg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+              <Icon name={c.icon} size={22} cls="" style={{color:c.color}}/>
+            </div>
+            <div>
+              <div style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>{stats?stats[c.key]:'—'}</div>
+              <div style={{fontSize:13,color:'#64748b'}}>{c.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card">
+        <h2 style={{fontSize:16,fontWeight:600,color:'#1e293b',marginBottom:12}}>Quick Actions</h2>
+        <div style={{display:'flex',flexWrap:'wrap',gap:10}}>
+          {[['New Patient','users'],['New Note','file'],['Lab Order','lab'],['Send Fax','fax']].map(([l,i])=>(
+            <button key={l} className="btn btn-outline" onClick={()=>window.dispatchEvent(new CustomEvent('nav',{detail:l.toLowerCase().replace(' ','-')}))}>
+              <Icon name={i} size={15}/>{l}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="card" style={{marginTop:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,color:'#16a34a',marginBottom:8}}>
+          <Icon name="shield" size={16}/><span style={{fontSize:14,fontWeight:600}}>HIPAA Compliance Active</span>
+        </div>
+        <p style={{fontSize:13,color:'#64748b'}}>All PHI access is automatically audit-logged with user ID, timestamp, and IP address. Token expiry: 8 hours.</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PATIENT LIST
+// ═══════════════════════════════════════════════════════════════════════════════
+function PatientList({token,onSelect,onNew}){
+  const [patients,setPatients]=useState([]);
+  const [search,setSearch]=useState('');
+  const [loading,setLoading]=useState(true);
+
+  const load=useCallback(async(q='')=>{
+    setLoading(true);
+    const data=await api('GET',`/api/patients${q?`?search=${encodeURIComponent(q)}`:''}`,null,token);
+    if(data) setPatients(data);
+    setLoading(false);
+  },[token]);
+
+  useEffect(()=>{load();},[load]);
+
+  const handleSearch=e=>{
+    const v=e.target.value;setSearch(v);
+    clearTimeout(window._st);window._st=setTimeout(()=>load(v),400);
+  };
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20,flexWrap:'wrap',gap:12}}>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Patients</h1>
+        <button className="btn btn-primary" onClick={onNew}><Icon name="plus" size={16}/>New Patient</button>
+      </div>
+      <div className="card">
+        <div style={{position:'relative',marginBottom:16}}>
+          <Icon name="search" size={16} cls="" style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',color:'#94a3b8'}}/>
+          <input className="input" style={{paddingLeft:36}} placeholder="Search by name, phone, or email…" value={search} onChange={handleSearch}/>
+        </div>
+        {loading?<div style={{textAlign:'center',padding:40}}><Spinner/></div>:(
+          <div style={{overflowX:'auto'}}>
+            <table style={{width:'100%',borderCollapse:'collapse'}}>
+              <thead>
+                <tr style={{borderBottom:'2px solid #e2e8f0'}}>
+                  {['Name','DOB','Phone','Insurance',''].map(h=>(
+                    <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:13,fontWeight:600,color:'#475569'}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {patients.length===0?
+                  <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'#94a3b8'}}>No patients found</td></tr>:
+                  patients.map(p=>(
+                    <tr key={p.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
+                      <td style={{padding:'12px 12px',fontWeight:500,color:'#1e293b'}}>{p.first_name} {p.last_name}</td>
+                      <td style={{padding:'12px 12px',color:'#64748b',fontSize:14}}>{p.dob}</td>
+                      <td style={{padding:'12px 12px',color:'#64748b',fontSize:14}}>{p.phone}</td>
+                      <td style={{padding:'12px 12px'}}><span className="badge badge-blue">{p.insurance_name||'—'}</span></td>
+                      <td style={{padding:'12px 12px'}}>
+                        <button className="btn btn-outline" onClick={()=>onSelect(p)}><Icon name="chevron" size={14}/>Chart</button>
+                      </td>
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEW / EDIT PATIENT FORM
+// ═══════════════════════════════════════════════════════════════════════════════
+function PatientForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const blank={first_name:'',last_name:'',dob:'',gender:'',phone:'',email:'',address:'',city:'',state:'',zip_code:'',insurance_name:'',insurance_id:'',insurance_group:'',emergency_contact:'',emergency_phone:'',ssn_last4:''};
+  const [form,setForm]=useState(patient?{...blank,...patient}:blank);
+  const [saving,setSaving]=useState(false);
+
+  const set=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const submit=async e=>{
+    e.preventDefault();setSaving(true);
+    try{
+      const data=patient
+        ?await api('PUT',`/api/patients/${patient.id}`,form,token)
+        :await api('POST','/api/patients',form,token);
+      if(data){toast(patient?'Patient updated':'Patient created');onSave(data);}
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  // G is a render helper — called as G({...}) not <G/> so React never treats
+  // it as a component type. This prevents unmount-on-rerender focus loss.
+  const G=({label,k,type='text',required=false,opts=null})=>(
+    <div>
+      <Field label={label} required={required}>
+        {opts
+          ?<select className="input" value={form[k]||''} onChange={set(k)}><option value="">Select…</option>{opts.map(o=><option key={o} value={o}>{o}</option>)}</select>
+          :<input className="input" type={type} value={form[k]||''} onChange={set(k)} required={required}/>
+        }
+      </Field>
+    </div>
+  );
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>{patient?'Edit Patient':'New Patient'}</h1>
+        <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
+      </div>
+      <form onSubmit={submit}>
+        <div className="card" style={{marginBottom:16}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Demographics</h3>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+            {G({label:"First Name",k:"first_name",required:true})}
+            {G({label:"Last Name",k:"last_name",required:true})}
+            {G({label:"Date of Birth",k:"dob",type:"date",required:true})}
+            {G({label:"Gender",k:"gender",opts:['Male','Female','Non-binary','Other','Prefer not to say']})}
+            {G({label:"Phone",k:"phone"})}
+            {G({label:"Email",k:"email",type:"email"})}
+            {G({label:"SSN Last 4",k:"ssn_last4"})}
+          </div>
+        </div>
+        <div className="card" style={{marginBottom:16}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Address</h3>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+            <div style={{gridColumn:'span 2'}}>{G({label:"Street Address",k:"address"})}</div>
+            {G({label:"City",k:"city"})}
+            {G({label:"State",k:"state",opts:['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']})}
+            {G({label:"ZIP Code",k:"zip_code"})}
+          </div>
+        </div>
+        <div className="card" style={{marginBottom:16}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Insurance</h3>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+            {G({label:"Insurance Name",k:"insurance_name"})}
+            {G({label:"Member ID",k:"insurance_id"})}
+            {G({label:"Group Number",k:"insurance_group"})}
+          </div>
+        </div>
+        <div className="card" style={{marginBottom:16}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Emergency Contact</h3>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+            {G({label:"Contact Name",k:"emergency_contact"})}
+            {G({label:"Contact Phone",k:"emergency_phone"})}
+          </div>
+        </div>
+        <button className="btn btn-primary" type="submit" disabled={saving} style={{width:'100%',justifyContent:'center',padding:12}}>
+          {saving?<Spinner/>:<><Icon name="check" size={16}/>{patient?'Save Changes':'Create Patient'}</>}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLINICAL NOTE EDITOR
+// ═══════════════════════════════════════════════════════════════════════════════
+const ICD10_COMMON=[
+  {code:'Z00.00',desc:'Routine adult exam, no abnormal findings'},
+  {code:'I10',desc:'Essential hypertension'},
+  {code:'E11.9',desc:'Type 2 diabetes without complications'},
+  {code:'E78.5',desc:'Hyperlipidemia, unspecified'},
+  {code:'J06.9',desc:'Acute upper respiratory infection'},
+  {code:'J44.1',desc:'COPD with acute exacerbation'},
+  {code:'M54.5',desc:'Low back pain'},
+  {code:'F41.1',desc:'Generalized anxiety disorder'},
+  {code:'F32.9',desc:'Major depressive disorder'},
+  {code:'N39.0',desc:'Urinary tract infection'},
+  {code:'K21.0',desc:'GERD with esophagitis'},
+  {code:'J18.9',desc:'Pneumonia, unspecified'},
+  {code:'I25.10',desc:'Atherosclerotic heart disease'},
+  {code:'E03.9',desc:'Hypothyroidism, unspecified'},
+];
+
+const CPT_COMMON=[
+  {code:'99202',desc:'New patient, straightforward MDM'},
+  {code:'99203',desc:'New patient, low complexity MDM'},
+  {code:'99204',desc:'New patient, moderate complexity MDM'},
+  {code:'99205',desc:'New patient, high complexity MDM'},
+  {code:'99211',desc:'Est. patient, minimal MDM'},
+  {code:'99212',desc:'Est. patient, straightforward MDM'},
+  {code:'99213',desc:'Est. patient, low complexity MDM'},
+  {code:'99214',desc:'Est. patient, moderate complexity MDM'},
+  {code:'99215',desc:'Est. patient, high complexity MDM'},
+  {code:'99395',desc:'Preventive visit, 18-39 years'},
+  {code:'99396',desc:'Preventive visit, 40-64 years'},
+  {code:'99397',desc:'Preventive visit, 65+ years'},
+];
+
+function NoteEditor({token,patient,note,onSave,onCancel}){
+  const toast=useToast();
+  const blank={chief_complaint:'',hpi:'',pmh:'',medications:'',allergies:'',ros:'',physical_exam:'',assessment:'',plan:'',icd10_codes:[],cpt_codes:[],note_type:'SOAP',visit_date:new Date().toISOString().slice(0,10),status:'draft',ai_generated:false};
+  const [form,setForm]=useState(note?{...blank,...note,icd10_codes:JSON.parse(note.icd10_codes||'[]'),cpt_codes:JSON.parse(note.cpt_codes||'[]'),visit_date:note.visit_date?.slice(0,10)||blank.visit_date}:blank);
+  const [saving,setSaving]=useState(false);
+  const [genLoading,setGenLoading]=useState(false);
+  const [aiPrompt,setAiPrompt]=useState('');
+  const [showAI,setShowAI]=useState(false);
+  const [pdfLoading,setPdfLoading]=useState(false);
+
+  const set=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const toggleCode=(type,code)=>{
+    setForm(f=>{
+      const arr=f[type];
+      return {...f,[type]:arr.includes(code)?arr.filter(c=>c!==code):[...arr,code]};
+    });
+  };
+
+  const saveNote=async(status='draft')=>{
+    setSaving(true);
+    try{
+      const payload={...form,patient_id:patient.id,status};
+      const data=note
+        ?await api('PUT',`/api/notes/${note.id}`,payload,token)
+        :await api('POST','/api/notes',payload,token);
+      if(data){toast(status==='signed'?'Note signed & saved':'Note saved');onSave(data);}
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const generateAI=async()=>{
+    if(!aiPrompt.trim()) return;
+    setGenLoading(true);
+    try{
+      const r=await api('POST','/api/notes/ai-generate',{prompt:aiPrompt,patient_id:patient.id},token);
+      if(r?.success){
+        setForm(f=>({...f,...r.note,icd10_codes:r.note.icd10_codes||[],cpt_codes:r.note.cpt_codes||[],ai_generated:true}));
+        setShowAI(false);
+        toast('AI note generated — please review before signing');
+      } else {
+        toast(r?.error||'AI generation failed','error');
+      }
+    }catch(e){toast(e.message,'error');}
+    setGenLoading(false);
+  };
+
+  const downloadPDF=async()=>{
+    if(!note?.id){toast('Save the note first','warning');return;}
+    setPdfLoading(true);
+    try{
+      const blob=await api('GET',`/api/notes/${note.id}/pdf`,null,token);
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download=`note_${note.id}.pdf`;a.click();
+      URL.revokeObjectURL(url);
+    }catch(e){toast(e.message,'error');}
+    setPdfLoading(false);
+  };
+
+  const TA=({label,k,rows=3})=>(
+    <div>
+      <label className="label">{label}</label>
+      <textarea className="input" rows={rows} value={form[k]||''} onChange={set(k)} style={{minHeight:rows*28}}/>
+    </div>
+  );
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20,flexWrap:'wrap',gap:10}}>
+        <div>
+          <h1 style={{fontSize:20,fontWeight:700,color:'#1e293b'}}>{note?'Edit Note':'New Clinical Note'}</h1>
+          <p style={{fontSize:13,color:'#64748b'}}>Patient: {patient.first_name} {patient.last_name}</p>
+        </div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          {note&&<button className="btn btn-outline" onClick={downloadPDF} disabled={pdfLoading}><Icon name="pdf" size={15}/>{pdfLoading?'…':'PDF'}</button>}
+          <button className="btn btn-secondary" onClick={()=>setShowAI(true)}><Icon name="robot" size={15}/>AI Generate</button>
+          <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-secondary" onClick={()=>saveNote('draft')} disabled={saving}>Save Draft</button>
+          <button className="btn btn-success" onClick={()=>saveNote('signed')} disabled={saving}><Icon name="check" size={15}/>Sign Note</button>
+        </div>
+      </div>
+
+      {form.ai_generated&&<div style={{background:'#fef9c3',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:16,fontSize:13,color:'#854d0e'}}>
+        ⚠️ AI-generated note — review all content carefully before signing. Physician is responsible for accuracy.
+      </div>}
+
+      {showAI&&(
+        <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#1e293b',marginBottom:10}}>🤖 AI Note Generator (Local LLM)</h3>
+          <p style={{fontSize:13,color:'#64748b',marginBottom:12}}>Describe the clinical encounter. The AI will generate a complete Medicare-compliant SOAP note with ICD-10 and CPT codes.</p>
+          <textarea className="input" rows={4} value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="e.g. 65-year-old male with 2-week history of productive cough, fever 101.2°F, shortness of breath. PMH: HTN, DM2. On metformin and lisinopril. SpO2 94% on room air…"/>
+          <div style={{display:'flex',gap:8,marginTop:10}}>
+            <button className="btn btn-primary" onClick={generateAI} disabled={genLoading||!aiPrompt.trim()}>
+              {genLoading?<><Spinner/> Generating…</>:<><Icon name="robot" size={15}/>Generate Note</>}
+            </button>
+            <button className="btn btn-secondary" onClick={()=>setShowAI(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+        <div>
+          <label className="label">Visit Date</label>
+          <input className="input" type="date" value={form.visit_date} onChange={set('visit_date')}/>
+        </div>
+        <div>
+          <label className="label">Note Type</label>
+          <select className="input" value={form.note_type} onChange={set('note_type')}>
+            {['SOAP','Progress Note','Initial Evaluation','Follow-Up','Annual Wellness','Telehealth'].map(t=><option key={t}>{t}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:12}}>
+        <div style={{display:'grid',gap:12}}>
+          <TA label="Chief Complaint" k="chief_complaint" rows={2}/>
+          <TA label="History of Present Illness (HPI)" k="hpi" rows={4}/>
+          <TA label="Past Medical / Surgical / Family History (PFSH)" k="pmh" rows={3}/>
+          <TA label="Current Medications" k="medications" rows={3}/>
+          <TA label="Allergies" k="allergies" rows={2}/>
+          <TA label="Review of Systems (ROS)" k="ros" rows={4}/>
+          <TA label="Physical Examination" k="physical_exam" rows={5}/>
+          <TA label="Assessment & Diagnoses" k="assessment" rows={4}/>
+          <TA label="Plan" k="plan" rows={5}/>
+        </div>
+      </div>
+
+      <div className="card" style={{marginBottom:16}}>
+        <h3 style={{fontSize:15,fontWeight:600,color:'#1e293b',marginBottom:14}}>Billing Codes</h3>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+          <div>
+            <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>ICD-10 Diagnosis Codes</h4>
+            <div style={{maxHeight:200,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,padding:8}}>
+              {ICD10_COMMON.map(c=>(
+                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.icd10_codes.includes(c.code)?'#dbeafe':'transparent'}}>
+                  <input type="checkbox" checked={form.icd10_codes.includes(c.code)} onChange={()=>toggleCode('icd10_codes',c.code)}/>
+                  <span style={{fontSize:13}}><b>{c.code}</b> — {c.desc}</span>
+                </label>
+              ))}
+            </div>
+            {form.icd10_codes.length>0&&<div style={{marginTop:8,display:'flex',flexWrap:'wrap',gap:4}}>
+              {form.icd10_codes.map(c=><span key={c} className="badge badge-blue">{c} <span style={{cursor:'pointer',marginLeft:4}} onClick={()=>toggleCode('icd10_codes',c)}>×</span></span>)}
+            </div>}
+          </div>
+          <div>
+            <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>CPT E&M Codes</h4>
+            <div style={{maxHeight:200,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,padding:8}}>
+              {CPT_COMMON.map(c=>(
+                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.cpt_codes.includes(c.code)?'#dcfce7':'transparent'}}>
+                  <input type="checkbox" checked={form.cpt_codes.includes(c.code)} onChange={()=>toggleCode('cpt_codes',c.code)}/>
+                  <span style={{fontSize:13}}><b>{c.code}</b> — {c.desc}</span>
+                </label>
+              ))}
+            </div>
+            {form.cpt_codes.length>0&&<div style={{marginTop:8,display:'flex',flexWrap:'wrap',gap:4}}>
+              {form.cpt_codes.map(c=><span key={c} className="badge badge-green">{c} <span style={{cursor:'pointer',marginLeft:4}} onClick={()=>toggleCode('cpt_codes',c)}>×</span></span>)}
+            </div>}
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+        <button className="btn btn-secondary" onClick={()=>saveNote('draft')} disabled={saving}>Save Draft</button>
+        <button className="btn btn-success" onClick={()=>saveNote('signed')} disabled={saving}>
+          <Icon name="check" size={15}/>Sign & Lock Note
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PATIENT CHART  (tabbed)
+// ═══════════════════════════════════════════════════════════════════════════════
+function PatientChart({token,patient,onBack,user}){
+  const toast=useToast();
+  const [tab,setTab]=useState('notes');
+  const [notes,setNotes]=useState([]);
+  const [labs,setLabs]=useState([]);
+  const [imaging,setImaging]=useState([]);
+  const [faxes,setFaxes]=useState([]);
+  const [memberships,setMemberships]=useState([]);
+  const [payments,setPayments]=useState([]);
+  const [patientData,setPatientData]=useState(patient);
+  const [editingPatient,setEditingPatient]=useState(false);
+  const [editNote,setEditNote]=useState(null);
+  const [showNewNote,setShowNewNote]=useState(false);
+  const [showLabForm,setShowLabForm]=useState(false);
+  const [showImagingForm,setShowImagingForm]=useState(false);
+  const [showFaxForm,setShowFaxForm]=useState(false);
+  const [showMembershipForm,setShowMembershipForm]=useState(false);
+  const [showSquareMembershipModal,setShowSquareMembershipModal]=useState(false);
+  const [showPaymentForm,setShowPaymentForm]=useState(false);
+  const [showSquareModal,setShowSquareModal]=useState(false);
+  const [showZapriteModal,setShowZapriteModal]=useState(false);
+  const [pdfLoading,setPdfLoading]=useState(null);
+  const [labResults,setLabResults]=useState({});    // { [order_id]: result obj }
+  const [checkingResult,setCheckingResult]=useState(new Set());
+  const [expandedResult,setExpandedResult]=useState(null); // order_id whose results are open
+
+  useEffect(()=>{
+    const pid=patient.id;
+    api('GET',`/api/notes?patient_id=${pid}`,null,token).then(d=>d&&setNotes(d));
+    api('GET',`/api/lab-orders?patient_id=${pid}`,null,token).then(d=>d&&setLabs(d));
+    api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
+    api('GET',`/api/memberships?patient_id=${pid}`,null,token).then(d=>d&&setMemberships(d));
+    api('GET',`/api/payments?patient_id=${pid}`,null,token).then(d=>d&&setPayments(d));
+  },[patient.id,token]);
+
+  const downloadPDF=async(noteId)=>{
+    setPdfLoading(noteId);
+    const blob=await api('GET',`/api/notes/${noteId}/pdf`,null,token).catch(e=>{toast(e.message,'error');return null;});
+    if(blob){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`note_${noteId}.pdf`;a.click();URL.revokeObjectURL(url);}
+    setPdfLoading(null);
+  };
+
+  const transmitLab=async(id)=>{
+    const r=await api('POST',`/api/lab-orders/${id}/transmit`,{},token).catch(e=>{toast(e.message,'error');return null;});
+    if(r){toast('Lab order transmitted to LabCorp');setLabs(labs.map(l=>l.id===id?{...l,status:'transmitted'}:l));}
+  };
+
+  const faxImaging=async(id)=>{
+    const r=await api('POST',`/api/imaging-orders/${id}/fax`,{},token).catch(e=>{toast(e.message,'error');return null;});
+    if(r){toast('Imaging order faxed');setImaging(imaging.map(o=>o.id===id?{...o,fax_status:'sent'}:o));}
+  };
+
+  const checkResult=async(id)=>{
+    setCheckingResult(prev=>{const s=new Set(prev);s.add(id);return s;});
+    try{
+      const r=await api('GET',`/api/lab-orders/${id}/result`,null,token);
+      if(r){
+        setLabResults(prev=>({...prev,[id]:r}));
+        if(r.observations?.length>0){
+          setLabs(prev=>prev.map(l=>l.id===id?{...l,status:'resulted'}:l));
+          setExpandedResult(id);
+          toast('Results received from LabCorp');
+        } else {
+          toast(r.status==='pending'?'Results not yet available':'Status: '+r.status);
+        }
+      }
+    }catch(e){toast(e.message,'error');}
+    setCheckingResult(prev=>{const s=new Set(prev);s.delete(id);return s;});
+  };
+
+  const downloadResultPdf=async(id)=>{
+    try{
+      const resp=await fetch(`/api/lab-orders/${id}/result-pdf`,{headers:{Authorization:`Bearer ${token}`}});
+      if(!resp.ok)throw new Error('PDF not available');
+      const blob=await resp.blob();
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=url;a.download=`lab_result_${id}.pdf`;a.click();URL.revokeObjectURL(url);
+    }catch(e){toast(e.message,'error');}
+  };
+
+  if(showNewNote||editNote) return(
+    <NoteEditor token={token} patient={patient} note={editNote}
+      onSave={n=>{
+        setNotes(prev=>editNote?prev.map(x=>x.id===n.id?n:x):[n,...prev]);
+        setEditNote(null);setShowNewNote(false);
+      }}
+      onCancel={()=>{setEditNote(null);setShowNewNote(false);}}
+    />
+  );
+
+  const tabs=[['info','Demographics','users'],['history','History & Meds','clipboard'],['notes','Notes','file'],['labs','Labs','lab'],['imaging','Imaging','xray'],['fax','Fax','fax'],['memberships','Memberships','star'],['payments','Payments','payment']];
+
+  const statusBadge=(s)=>{
+    const map={draft:'badge-gray',signed:'badge-green',pending:'badge-yellow',transmitted:'badge-blue',sent:'badge-blue',active:'badge-green',cancelled:'badge-red',completed:'badge-green',failed:'badge-red',routine:'badge-gray',stat:'badge-red'};
+    return <span className={`badge ${map[s]||'badge-gray'}`}>{s}</span>;
+  };
+
+  return(
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
+        <button className="btn btn-outline" onClick={onBack}>← Back</button>
+        <div>
+          <h1 style={{fontSize:22,fontWeight:700,color:'#1e293b'}}>{patient.first_name} {patient.last_name}</h1>
+          <p style={{fontSize:13,color:'#64748b'}}>DOB: {patient.dob} · {patient.phone} · {patient.insurance_name}</p>
+        </div>
+      </div>
+
+      <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16,overflowX:'auto'}}>
+        {tabs.map(([k,l,i])=>(
+          <button key={k} className={`tab${tab===k?' active':''}`} onClick={()=>setTab(k)} style={{display:'flex',alignItems:'center',gap:6,whiteSpace:'nowrap'}}>
+            <Icon name={i} size={14}/>{l}
+          </button>
+        ))}
+      </div>
+
+      {/* DEMOGRAPHICS TAB */}
+      {tab==='info'&&(
+        <div>
+          {!editingPatient?(
+            <div>
+              <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+                <button className="btn btn-primary" onClick={()=>setEditingPatient(true)}><Icon name="edit" size={15}/>Edit Demographics</button>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+                <div className="card">
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Personal Information</h3>
+                  {[['Full Name',`${patientData.first_name} ${patientData.last_name}`],['Date of Birth',patientData.dob],['Gender',patientData.gender],['Phone',patientData.phone],['Email',patientData.email],['SSN Last 4',patientData.ssn_last4?`***-**-${patientData.ssn_last4}`:'—']].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
+                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="card">
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Address</h3>
+                  {[['Street',patientData.address],['City',patientData.city],['State',patientData.state],['ZIP',patientData.zip_code]].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
+                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="card">
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Insurance</h3>
+                  {[['Insurance',patientData.insurance_name],['Member ID',patientData.insurance_id],['Group #',patientData.insurance_group]].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
+                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="card">
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Emergency Contact</h3>
+                  {[['Name',patientData.emergency_contact],['Phone',patientData.emergency_phone]].map(([l,v])=>(
+                    <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
+                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ):(
+            <PatientForm token={token} patient={patientData}
+              onSave={updated=>{setPatientData(updated);setEditingPatient(false);toast('Patient updated');}}
+              onCancel={()=>setEditingPatient(false)}
+            />
+          )}
+        </div>
+      )}
+
+      {/* NOTES TAB */}
+      {tab==='notes'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <button className="btn btn-primary" onClick={()=>setShowNewNote(true)}><Icon name="plus" size={15}/>New Note</button>
+          </div>
+          {notes.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No notes yet</div>:notes.map(n=>(
+            <div key={n.id} className="card" style={{marginBottom:10}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
+                <div>
+                  <div style={{fontWeight:600,color:'#1e293b'}}>{n.note_type} — {n.visit_date?.slice(0,10)}</div>
+                  <div style={{fontSize:13,color:'#64748b',marginTop:2}}>{n.chief_complaint?.slice(0,80)}…</div>
+                  <div style={{display:'flex',gap:6,marginTop:6,flexWrap:'wrap'}}>
+                    {statusBadge(n.status)}
+                    {n.ai_generated&&<span className="badge badge-yellow">AI-assisted</span>}
+                    {JSON.parse(n.icd10_codes||'[]').slice(0,3).map(c=><span key={c} className="badge badge-blue">{c}</span>)}
+                    {JSON.parse(n.cpt_codes||'[]').slice(0,2).map(c=><span key={c} className="badge badge-green">{c}</span>)}
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                  <button className="btn btn-outline" onClick={()=>downloadPDF(n.id)} disabled={pdfLoading===n.id}><Icon name="pdf" size={14}/>{pdfLoading===n.id?'…':'PDF'}</button>
+                  {n.status!=='signed'&&<button className="btn btn-outline" onClick={()=>setEditNote(n)}><Icon name="edit" size={14}/>Edit</button>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LABS TAB */}
+      {tab==='labs'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <button className="btn btn-primary" onClick={()=>setShowLabForm(true)}><Icon name="plus" size={15}/>New Lab Order</button>
+          </div>
+
+          {labs.length===0&&<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No lab orders</div>}
+
+          {labs.map(l=>{
+            const result=labResults[l.id];
+            const isChecking=checkingResult.has(l.id);
+            const obs=result?.observations||[];
+            const isExpanded=expandedResult===l.id;
+            const hasNewResults=l.status==='resulted'&&obs.length>0;
+            const abnormals=obs.filter(o=>o.abnormal_flag&&o.abnormal_flag!=='N'&&o.abnormal_flag!=='');
+            return(
+              <div key={l.id} className="card" style={{marginBottom:10,border:hasNewResults?'2px solid #16a34a':'1px solid #e2e8f0'}}>
+                {/* Order header */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:14,marginBottom:2}}>
+                      {JSON.parse(l.tests||'[]').join(', ')}
+                      {hasNewResults&&<span style={{marginLeft:8,fontSize:11,background:'#dcfce7',color:'#16a34a',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ RESULTS IN</span>}
+                      {abnormals.length>0&&<span style={{marginLeft:6,fontSize:11,background:'#fee2e2',color:'#dc2626',padding:'2px 8px',borderRadius:10,fontWeight:700}}>⚠ {abnormals.length} ABNORMAL</span>}
+                    </div>
+                    <div style={{fontSize:12,color:'#64748b'}}>
+                      {l.facility} · {l.created_at?.slice(0,10)} · {statusBadge(l.priority)}
+                      {l.labcorp_order_id&&<span style={{marginLeft:8,fontFamily:'monospace',color:'#94a3b8'}}>LC#{l.labcorp_order_id}</span>}
+                    </div>
+                    {l.clinical_indication&&<div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>{l.clinical_indication}</div>}
+                  </div>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+                    {statusBadge(l.status)}
+                    {l.status==='pending'&&(
+                      <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>transmitLab(l.id)}>
+                        <Icon name="send" size={13}/>Send to LabCorp
+                      </button>
+                    )}
+                    {(l.status==='transmitted'||l.status==='resulted')&&(
+                      <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>checkResult(l.id)} disabled={isChecking}>
+                        {isChecking?<Spinner/>:<><Icon name="check" size={13}/>Check Results</>}
+                      </button>
+                    )}
+                    {(hasNewResults||result?.has_pdf)&&(
+                      <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px',background:'#f0fdf4',color:'#16a34a',borderColor:'#16a34a'}}
+                        onClick={()=>setExpandedResult(isExpanded?null:l.id)}>
+                        {isExpanded?'Hide Results':'View Results'}
+                      </button>
+                    )}
+                    {result?.has_pdf&&(
+                      <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>downloadResultPdf(l.id)} title="Download PDF">
+                        ⬇ PDF
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Expanded result observations */}
+                {isExpanded&&obs.length>0&&(
+                  <div style={{marginTop:14,borderTop:'1px solid #e2e8f0',paddingTop:12}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'#475569',marginBottom:8}}>
+                      RESULT — {result.received_at?.slice(0,10)}
+                      {result.status&&<span style={{marginLeft:8,textTransform:'uppercase',color:'#94a3b8'}}>{result.status}</span>}
+                    </div>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+                      <thead>
+                        <tr style={{borderBottom:'1px solid #e2e8f0'}}>
+                          {['Test','Result','Units','Reference Range','Flag'].map(h=>(
+                            <th key={h} style={{textAlign:'left',padding:'4px 8px',color:'#64748b',fontWeight:600,fontSize:11}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {obs.map((o,i)=>{
+                          const isAbn=o.abnormal_flag&&o.abnormal_flag!=='N'&&o.abnormal_flag!=='';
+                          const isCritical=['HH','LL'].includes(o.abnormal_flag);
+                          return(
+                            <tr key={i} style={{
+                              borderBottom:'1px solid #f8fafc',
+                              background:isCritical?'#fef2f2':isAbn?'#fffbeb':'transparent'
+                            }}>
+                              <td style={{padding:'5px 8px',fontWeight:500}}>{o.name}</td>
+                              <td style={{padding:'5px 8px',fontWeight:isAbn?700:400,color:isCritical?'#dc2626':isAbn?'#d97706':'#1e293b'}}>{o.value}</td>
+                              <td style={{padding:'5px 8px',color:'#64748b'}}>{o.units}</td>
+                              <td style={{padding:'5px 8px',color:'#64748b'}}>{o.reference_range}</td>
+                              <td style={{padding:'5px 8px'}}>
+                                {isAbn&&<span style={{
+                                  fontSize:11,fontWeight:700,padding:'1px 6px',borderRadius:8,
+                                  background:isCritical?'#fee2e2':'#fef9c3',
+                                  color:isCritical?'#dc2626':'#92400e'
+                                }}>{o.abnormal_flag}</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {abnormals.length>0&&(
+                      <div style={{marginTop:10,padding:'8px 12px',background:'#fef2f2',borderRadius:8,fontSize:12,color:'#991b1b'}}>
+                        ⚠ {abnormals.length} abnormal value{abnormals.length>1?'s':''}: {abnormals.map(o=>o.name).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {showLabForm&&<LabOrderForm token={token} patient={patient} onSave={o=>{setLabs([o,...labs]);setShowLabForm(false);}} onCancel={()=>setShowLabForm(false)}/>}
+        </div>
+      )}
+
+      {/* IMAGING TAB */}
+      {tab==='imaging'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <button className="btn btn-primary" onClick={()=>setShowImagingForm(true)}><Icon name="plus" size={15}/>New Imaging Order</button>
+          </div>
+          {imaging.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No imaging orders</div>:imaging.map(o=>(
+            <div key={o.id} className="card" style={{marginBottom:10}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                <div>
+                  <div style={{fontWeight:600}}>{o.study_type} — {o.body_part}</div>
+                  <div style={{fontSize:13,color:'#64748b'}}>{o.facility} · Fax: {o.fax_number} · {o.created_at?.slice(0,10)}</div>
+                  <div style={{fontSize:13,color:'#64748b'}}>{o.clinical_indication}</div>
+                </div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  {statusBadge(o.fax_status)}
+                  {o.fax_status==='pending'&&<button className="btn btn-primary" onClick={()=>faxImaging(o.id)}><Icon name="fax" size={14}/>Fax Order</button>}
+                </div>
+              </div>
+            </div>
+          ))}
+          {showImagingForm&&<ImagingOrderForm token={token} patient={patient} onSave={o=>{setImaging([o,...imaging]);setShowImagingForm(false);}} onCancel={()=>setShowImagingForm(false)}/>}
+        </div>
+      )}
+
+      {/* FAX TAB */}
+      {tab==='fax'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <button className="btn btn-primary" onClick={()=>setShowFaxForm(true)}><Icon name="plus" size={15}/>Send Fax</button>
+          </div>
+          {faxes.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No faxes</div>:faxes.map(f=>(
+            <div key={f.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+              <div><Icon name={f.direction==='sent'?'send':'fax'} size={14}/> <b>{f.direction.toUpperCase()}</b> — {f.subject}
+                <div style={{fontSize:13,color:'#64748b'}}>{f.direction==='sent'?'To: ':'From: '}{f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
+              </div>
+              {statusBadge(f.status)}
+            </div>
+          ))}
+          {showFaxForm&&<FaxForm token={token} patient={patient} onSave={f=>{setFaxes([f,...faxes]);setShowFaxForm(false);}} onCancel={()=>setShowFaxForm(false)}/>}
+        </div>
+      )}
+
+      {/* MEMBERSHIPS TAB */}
+      {tab==='memberships'&&(
+        <div>
+          {showSquareMembershipModal&&<SquareMembershipModal token={token} patient={patient} onClose={()=>setShowSquareMembershipModal(false)} onSave={m=>{setMemberships([m,...memberships]);setShowSquareMembershipModal(false);toast('Subscription activated!');}}/>}
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12,gap:8,flexWrap:'wrap'}}>
+            <button className="btn btn-primary" style={{background:'#006aff'}} onClick={()=>setShowSquareMembershipModal(true)}>
+              <span style={{fontSize:14}}>💳</span> Subscribe with Square
+            </button>
+            <button className="btn btn-secondary" onClick={()=>setShowMembershipForm(true)}><Icon name="plus" size={15}/>Manual Membership</button>
+          </div>
+          {memberships.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No memberships</div>:memberships.map(m=>(
+            <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+              <div><div style={{fontWeight:600}}>{m.plan_name}</div>
+                <div style={{fontSize:13,color:'#64748b'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
+                {m.stripe_subscription_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Square card ID: {m.stripe_subscription_id.slice(0,20)}…</div>}
+              </div>
+              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                {statusBadge(m.status)}
+                {m.stripe_subscription_id&&m.status==='active'&&(
+                  <button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px'}} onClick={async()=>{
+                    if(!window.confirm('Cancel this Square subscription?')) return;
+                    const r=await api('DELETE',`/api/square/subscription/${m.id}`,null,token).catch(e=>{toast(e.message,'error');return null;});
+                    if(r){toast('Subscription cancelled');setMemberships(memberships.map(x=>x.id===m.id?{...x,status:'cancelled'}:x));}
+                  }}>Cancel Sub</button>
+                )}
+              </div>
+            </div>
+          ))}
+          {showMembershipForm&&<MembershipForm token={token} patient={patient} onSave={m=>{setMemberships([m,...memberships]);setShowMembershipForm(false);}} onCancel={()=>setShowMembershipForm(false)}/>}
+        </div>
+      )}
+
+      {/* PAYMENTS TAB */}
+      {tab==='payments'&&(
+        <div>
+          {showSquareModal&&<SquarePaymentModal token={token} patient={patient} onClose={()=>setShowSquareModal(false)} onSave={p=>{setPayments(prev=>[p,...prev]);setShowSquareModal(false);}}/>}
+          {showZapriteModal&&<ZapritePaymentModal token={token} patient={patient} onClose={()=>setShowZapriteModal(false)} onSave={p=>{setPayments(prev=>[p,...prev]);setShowZapriteModal(false);}}/>}
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12,gap:8,flexWrap:'wrap'}}>
+            <button className="btn btn-primary" style={{background:'#006aff'}} onClick={()=>setShowSquareModal(true)}>
+              <span style={{fontSize:14}}>💳</span> Card (Square)
+            </button>
+            <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setShowZapriteModal(true)}>
+              <span style={{fontSize:14}}>⚡</span> Crypto (Zaprite)
+            </button>
+            <button className="btn btn-secondary" onClick={()=>setShowPaymentForm(true)}><Icon name="plus" size={15}/>Record Manual</button>
+          </div>
+
+          {/* Revenue summary */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:16}}>
+            <div className="card" style={{padding:'14px 18px'}}>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>CARD (SQUARE)</div>
+              <div style={{fontSize:20,fontWeight:800,color:'#006aff'}}>${payments.filter(p=>p.status==='completed'&&p.payment_method==='square').reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
+            </div>
+            <div className="card" style={{padding:'14px 18px'}}>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>CRYPTO (ZAPRITE)</div>
+              <div style={{fontSize:20,fontWeight:800,color:'#f7931a'}}>${payments.filter(p=>p.status==='completed'&&p.payment_method==='crypto').reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
+            </div>
+            <div className="card" style={{padding:'14px 18px'}}>
+              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>MANUAL</div>
+              <div style={{fontSize:20,fontWeight:800,color:'#16a34a'}}>${payments.filter(p=>p.status==='completed'&&!['square','crypto'].includes(p.payment_method)).reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Payments list */}
+          {payments.length>0&&(
+            <div>
+              <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>Payment History</h4>
+              {payments.map(p=>(
+                <div key={p.id} className="card" style={{marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                  <div><div style={{fontWeight:600}}>${p.amount.toFixed(2)} — {p.description}</div>
+                    <div style={{fontSize:13,color:'#64748b'}}>{p.payment_method} · {p.created_at?.slice(0,10)}</div>
+                  </div>
+                  {statusBadge(p.status)}
+                </div>
+              ))}
+            </div>
+          )}
+          {payments.length===0&&<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No payments yet</div>}
+          {showPaymentForm&&<PaymentForm token={token} patient={patient} onSave={p=>{setPayments([p,...payments]);setShowPaymentForm(false);}} onCancel={()=>setShowPaymentForm(false)}/>}
+        </div>
+      )}
+
+      {/* HISTORY & MEDS TAB */}
+      {tab==='history'&&<HistoryMedsTab token={token} patient={patient}/>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MINI FORMS
+// ═══════════════════════════════════════════════════════════════════════════════
+const LAB_TESTS=['CBC','CMP','Lipid Panel','HbA1c','TSH','Urinalysis','Urine Culture','PT/INR','PSA','Vitamin D 25-OH','BMP','LFTs','Ferritin','B12','Folate','CRP','ESR','HIV','HBsAg','HCV Ab','Mono','Strep A','Flu A/B'];
+
+function LabOrderForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({tests:[],clinical_indication:'',priority:'routine',facility:'LabCorp',icd10_codes:[],notes:''});
+  const [saving,setSaving]=useState(false);
+  const toggle=t=>setForm(f=>({...f,tests:f.tests.includes(t)?f.tests.filter(x=>x!==t):[...f.tests,t]}));
+  const submit=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/lab-orders',{...form,patient_id:patient.id},token);if(d){toast('Lab order created');onSave(d);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+  return(
+    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+      <h3 style={{fontWeight:700,marginBottom:12}}>New Lab Order — {patient.first_name} {patient.last_name}</h3>
+      <form onSubmit={submit}>
+        <div style={{marginBottom:12}}>
+          <label className="label">Tests</label>
+          <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+            {LAB_TESTS.map(t=><label key={t} style={{display:'flex',gap:4,alignItems:'center',fontSize:13,cursor:'pointer',padding:'3px 8px',borderRadius:20,background:form.tests.includes(t)?'#dbeafe':'#f1f5f9'}}>
+              <input type="checkbox" checked={form.tests.includes(t)} onChange={()=>toggle(t)}/>{t}
+            </label>)}
+          </div>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div><label className="label">Clinical Indication</label><input className="input" value={form.clinical_indication} onChange={e=>setForm({...form,clinical_indication:e.target.value})}/></div>
+          <div><label className="label">Priority</label><select className="input" value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})}><option value="routine">Routine</option><option value="stat">STAT</option><option value="asap">ASAP</option></select></div>
+        </div>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving||!form.tests.length}>{saving?<Spinner/>:'Create Order'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+function ImagingOrderForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({study_type:'',body_part:'',clinical_indication:'',priority:'routine',facility:'',fax_number:'',notes:''});
+  const [saving,setSaving]=useState(false);
+  const submit=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/imaging-orders',{...form,patient_id:patient.id},token);if(d){toast('Imaging order created');onSave(d);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+  const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+  return(
+    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+      <h3 style={{fontWeight:700,marginBottom:12}}>New Imaging Order — {patient.first_name} {patient.last_name}</h3>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div><label className="label">Study Type *</label><select className="input" value={form.study_type} onChange={s('study_type')} required><option value="">Select…</option>{['X-Ray','CT Scan','MRI','Ultrasound','PET Scan','Mammogram','DEXA Scan','Echocardiogram','Nuclear Medicine'].map(t=><option key={t}>{t}</option>)}</select></div>
+          <div><label className="label">Body Part *</label><input className="input" value={form.body_part} onChange={s('body_part')} placeholder="e.g. Chest, Left Knee" required/></div>
+          <div><label className="label">Priority</label><select className="input" value={form.priority} onChange={s('priority')}><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="stat">STAT</option></select></div>
+          <div><label className="label">Facility Name</label><input className="input" value={form.facility} onChange={s('facility')}/></div>
+          <div><label className="label">Facility Fax #</label><input className="input" value={form.fax_number} onChange={s('fax_number')} placeholder="+15551234567"/></div>
+          <div><label className="label">Clinical Indication</label><input className="input" value={form.clinical_indication} onChange={s('clinical_indication')}/></div>
+        </div>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Order'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+function FaxForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({to_number:'',subject:'',pages:1,notes:''});
+  const [saving,setSaving]=useState(false);
+  const submit=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/faxes/send',{...form,patient_id:patient.id},token);if(d){toast('Fax queued');onSave(d);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+  const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+  return(
+    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+      <h3 style={{fontWeight:700,marginBottom:12}}>Send Fax</h3>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div><label className="label">To Fax # *</label><input className="input" value={form.to_number} onChange={s('to_number')} placeholder="+15551234567" required/></div>
+          <div><label className="label">Pages</label><input className="input" type="number" min={1} value={form.pages} onChange={s('pages')}/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Subject</label><input className="input" value={form.subject} onChange={s('subject')}/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Notes / Cover Sheet Text</label><textarea className="input" rows={3} value={form.notes} onChange={s('notes')}/></div>
+        </div>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:<><Icon name="send" size={14}/>Send Fax</>}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+function MembershipForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const plans=[{name:'Basic',price:99},{name:'Standard',price:149},{name:'Premium',price:249},{name:'Concierge',price:499}];
+  const [form,setForm]=useState({plan_name:'Basic',price_monthly:99,start_date:new Date().toISOString().slice(0,10)});
+  const [saving,setSaving]=useState(false);
+  const submit=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/memberships',{...form,patient_id:patient.id},token);if(d){toast('Membership created');onSave(d);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+  return(
+    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+      <h3 style={{fontWeight:700,marginBottom:12}}>New Membership</h3>
+      <form onSubmit={submit}>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
+          {plans.map(p=>(
+            <label key={p.name} style={{padding:'10px 16px',borderRadius:10,border:`2px solid ${form.plan_name===p.name?'#2563eb':'#e2e8f0'}`,cursor:'pointer',background:form.plan_name===p.name?'#dbeafe':'#fff'}}>
+              <input type="radio" name="plan" hidden checked={form.plan_name===p.name} onChange={()=>setForm({...form,plan_name:p.name,price_monthly:p.price})}/>
+              <div style={{fontWeight:600}}>{p.name}</div>
+              <div style={{fontSize:13,color:'#64748b'}}>${p.price}/mo</div>
+            </label>
+          ))}
+        </div>
+        <div style={{marginBottom:12}}><label className="label">Start Date</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})}/></div>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Membership'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HISTORY & MEDS TAB
+// ═══════════════════════════════════════════════════════════════════════════════
+function HistoryMedsTab({token,patient}){
+  const toast=useToast();
+  const [meds,setMeds]=useState([]);
+  const [history,setHistory]=useState([]);
+  const [showMedForm,setShowMedForm]=useState(false);
+  const [editMed,setEditMed]=useState(null);
+  const [showHistoryForm,setShowHistoryForm]=useState(null); // null or entry_type string
+  const [editHistory,setEditHistory]=useState(null);
+
+  useEffect(()=>{
+    api('GET',`/api/patients/${patient.id}/medications`,null,token).then(d=>d&&setMeds(d));
+    api('GET',`/api/patients/${patient.id}/history`,null,token).then(d=>d&&setHistory(d));
+  },[patient.id,token]);
+
+  const deleteMed=async(id)=>{
+    if(!confirm('Remove this medication?'))return;
+    await api('DELETE',`/api/medications/${id}`,null,token).catch(e=>toast(e.message,'error'));
+    setMeds(prev=>prev.filter(m=>m.id!==id));toast('Medication removed');
+  };
+  const deleteHx=async(id)=>{
+    if(!confirm('Remove this entry?'))return;
+    await api('DELETE',`/api/history/${id}`,null,token).catch(e=>toast(e.message,'error'));
+    setHistory(prev=>prev.filter(h=>h.id!==id));toast('Entry removed');
+  };
+  const hxByType=t=>history.filter(h=>h.entry_type===t);
+
+  const SECTIONS=[
+    {type:'problem',  label:'Problems / Active Conditions',color:'#dc2626'},
+    {type:'allergy',  label:'Allergies',                  color:'#d97706'},
+    {type:'surgical', label:'Surgical History',           color:'#7c3aed'},
+    {type:'family',   label:'Family History',             color:'#0891b2'},
+    {type:'social',   label:'Social History',             color:'#16a34a'},
+    {type:'immunization',label:'Immunizations',           color:'#2563eb'},
+  ];
+
+  const statusColors={active:'#16a34a',resolved:'#64748b',inactive:'#94a3b8'};
+
+  return(
+    <div>
+      {/* ── MEDICATIONS ── */}
+      <div className="card" style={{marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <h3 style={{fontSize:15,fontWeight:700,color:'#1e293b'}}>💊 Active Medications</h3>
+          <button className="btn btn-primary" style={{fontSize:12,padding:'5px 12px'}} onClick={()=>{setEditMed(null);setShowMedForm(true);}}>+ Add Medication</button>
+        </div>
+
+        {showMedForm&&(
+          <MedicationForm token={token} patient={patient} med={editMed}
+            onSave={m=>{setMeds(prev=>editMed?prev.map(x=>x.id===m.id?m:x):[m,...prev]);setShowMedForm(false);setEditMed(null);toast('Medication saved');}}
+            onCancel={()=>{setShowMedForm(false);setEditMed(null);}}
+          />
+        )}
+
+        {meds.filter(m=>m.is_active).length===0&&!showMedForm&&(
+          <div style={{color:'#94a3b8',fontSize:14,padding:'8px 0'}}>No active medications on file</div>
+        )}
+        {meds.filter(m=>m.is_active).map(m=>(
+          <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #f1f5f9'}}>
+            <div>
+              <span style={{fontWeight:600,fontSize:14}}>{m.name}</span>
+              {m.dosage&&<span style={{color:'#475569',fontSize:13,marginLeft:8}}>{m.dosage}</span>}
+              {m.frequency&&<span style={{color:'#475569',fontSize:13,marginLeft:6}}>· {m.frequency}</span>}
+              {m.route&&m.route!=='oral'&&<span style={{color:'#94a3b8',fontSize:12,marginLeft:6}}>({m.route})</span>}
+              <div style={{fontSize:12,color:'#94a3b8',marginTop:3}}>
+                {m.indication&&<span>Indication: {m.indication}</span>}
+                {m.prescriber&&<span style={{marginLeft:10}}>Prescriber: {m.prescriber}</span>}
+              </div>
+            </div>
+            <div style={{display:'flex',gap:6,flexShrink:0}}>
+              <button className="btn btn-outline" style={{fontSize:11,padding:'3px 10px'}} onClick={()=>{setEditMed(m);setShowMedForm(true);}}>Edit</button>
+              <button style={{background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:12}} onClick={()=>deleteMed(m.id)}>✕</button>
+            </div>
+          </div>
+        ))}
+
+        {meds.filter(m=>!m.is_active).length>0&&(
+          <details style={{marginTop:10}}>
+            <summary style={{fontSize:12,color:'#94a3b8',cursor:'pointer',userSelect:'none'}}>
+              Discontinued ({meds.filter(m=>!m.is_active).length})
+            </summary>
+            {meds.filter(m=>!m.is_active).map(m=>(
+              <div key={m.id} style={{padding:'6px 0',borderBottom:'1px solid #f8fafc',opacity:0.55,fontSize:13}}>
+                <span style={{textDecoration:'line-through'}}>{m.name}</span>
+                {m.dosage&&<span style={{marginLeft:6}}>{m.dosage}</span>}
+              </div>
+            ))}
+          </details>
+        )}
+      </div>
+
+      {/* ── HISTORY SECTIONS ── */}
+      {SECTIONS.map(({type,label,color})=>(
+        <div key={type} className="card" style={{marginBottom:12}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+            <h3 style={{fontSize:14,fontWeight:700,color}}>{label}
+              <span style={{fontWeight:400,color:'#94a3b8',fontSize:12,marginLeft:8}}>({hxByType(type).length})</span>
+            </h3>
+            <button className="btn btn-outline" style={{fontSize:11,padding:'3px 10px'}}
+              onClick={()=>{setShowHistoryForm(showHistoryForm===type?null:type);setEditHistory(null);}}>
+              {showHistoryForm===type?'Cancel':'+ Add'}
+            </button>
+          </div>
+
+          {showHistoryForm===type&&(
+            <HistoryEntryForm token={token} patient={patient} entryType={type} entry={editHistory?.entry_type===type?editHistory:null}
+              onSave={h=>{setHistory(prev=>editHistory?prev.map(x=>x.id===h.id?h:x):[h,...prev]);setShowHistoryForm(null);setEditHistory(null);toast('Entry saved');}}
+              onCancel={()=>{setShowHistoryForm(null);setEditHistory(null);}}
+            />
+          )}
+
+          {hxByType(type).length===0&&showHistoryForm!==type&&(
+            <div style={{color:'#94a3b8',fontSize:13}}>None recorded</div>
+          )}
+          {hxByType(type).map(h=>(
+            <div key={h.id} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'8px 0',borderBottom:'1px solid #f8fafc'}}>
+              <div>
+                <span style={{fontWeight:500,fontSize:14}}>{h.description}</span>
+                {h.detail&&<span style={{fontSize:13,color:'#64748b',marginLeft:8}}>— {h.detail}</span>}
+                {h.onset_date&&<span style={{fontSize:12,color:'#94a3b8',marginLeft:8}}>({h.onset_date})</span>}
+                {h.status&&h.status!=='active'&&(
+                  <span style={{marginLeft:8,fontSize:11,padding:'2px 7px',borderRadius:10,background:'#f1f5f9',color:statusColors[h.status]||'#64748b'}}>{h.status}</span>
+                )}
+                {h.notes&&<div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>{h.notes}</div>}
+              </div>
+              <div style={{display:'flex',gap:6,flexShrink:0}}>
+                <button className="btn btn-outline" style={{fontSize:11,padding:'3px 10px'}} onClick={()=>{setEditHistory(h);setShowHistoryForm(type);}}>Edit</button>
+                <button style={{background:'#fee2e2',color:'#dc2626',border:'none',borderRadius:6,padding:'3px 8px',cursor:'pointer',fontSize:12}} onClick={()=>deleteHx(h.id)}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MedicationForm({token,patient,med,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({
+    name:med?.name||'',dosage:med?.dosage||'',frequency:med?.frequency||'',
+    route:med?.route||'oral',start_date:med?.start_date||'',end_date:med?.end_date||'',
+    prescriber:med?.prescriber||'',indication:med?.indication||'',
+    is_active:med?.is_active!==undefined?med.is_active:true,notes:med?.notes||''
+  });
+  const [saving,setSaving]=useState(false);
+  const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!form.name.trim()){toast('Medication name is required','error');return;}
+    setSaving(true);
+    try{
+      let d;
+      if(med){d=await api('PUT',`/api/medications/${med.id}`,form,token);}
+      else{d=await api('POST',`/api/patients/${patient.id}/medications`,form,token);}
+      if(d)onSave(d);
+    }catch(err){toast(err.message,'error');}
+    setSaving(false);
+  };
+
+  return(
+    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
+      <h4 style={{fontWeight:600,fontSize:14,marginBottom:12,color:'#1e293b'}}>{med?'Edit Medication':'Add Medication'}</h4>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div><label className="label">Name *</label><input className="input" value={form.name} onChange={F('name')} placeholder="e.g. Lisinopril"/></div>
+          <div><label className="label">Dosage</label><input className="input" value={form.dosage} onChange={F('dosage')} placeholder="e.g. 10 mg"/></div>
+          <div><label className="label">Frequency</label><input className="input" value={form.frequency} onChange={F('frequency')} placeholder="e.g. once daily"/></div>
+          <div><label className="label">Route</label>
+            <select className="input" value={form.route} onChange={F('route')}>
+              {['oral','topical','inhaled','sublingual','IV','IM','subcutaneous','nasal','ophthalmic','otic','rectal','transdermal','other'].map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div><label className="label">Start Date</label><input className="input" type="date" value={form.start_date} onChange={F('start_date')}/></div>
+          <div><label className="label">Prescriber</label><input className="input" value={form.prescriber} onChange={F('prescriber')} placeholder="Prescribing provider"/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Indication</label><input className="input" value={form.indication} onChange={F('indication')} placeholder="Reason for medication"/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Notes</label><input className="input" value={form.notes} onChange={F('notes')} placeholder="Additional notes"/></div>
+        </div>
+        <label style={{display:'flex',alignItems:'center',gap:8,fontSize:14,marginBottom:12,cursor:'pointer'}}>
+          <input type="checkbox" checked={form.is_active} onChange={e=>setForm(f=>({...f,is_active:e.target.checked}))}/>
+          Active medication
+        </label>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Save'}</button>
+          <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function HistoryEntryForm({token,patient,entryType,entry,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({
+    description:entry?.description||'',
+    detail:entry?.detail||'',
+    onset_date:entry?.onset_date||'',
+    status:entry?.status||'active',
+    notes:entry?.notes||''
+  });
+  const [saving,setSaving]=useState(false);
+  const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const DETAIL_LABEL={
+    allergy:'Reaction / Severity',
+    family:'Relationship (e.g. Father)',
+    surgical:'Surgeon / Outcome',
+    problem:'Severity / Stage',
+    social:'Details',
+    immunization:'Lot # / Site',
+  };
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!form.description.trim()){toast('Description is required','error');return;}
+    setSaving(true);
+    try{
+      let d;
+      if(entry){d=await api('PUT',`/api/history/${entry.id}`,form,token);}
+      else{d=await api('POST',`/api/patients/${patient.id}/history`,{...form,entry_type:entryType},token);}
+      if(d)onSave(d);
+    }catch(err){toast(err.message,'error');}
+    setSaving(false);
+  };
+
+  return(
+    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
+          <div style={{gridColumn:'span 2'}}>
+            <label className="label">Description *</label>
+            <input className="input" value={form.description} onChange={F('description')} placeholder={
+              entryType==='allergy'?'e.g. Penicillin':
+              entryType==='problem'?'e.g. Type 2 Diabetes':
+              entryType==='surgical'?'e.g. Appendectomy':
+              entryType==='family'?'e.g. Heart disease':
+              entryType==='social'?'e.g. Smokes 1 PPD':
+              'e.g. COVID-19 vaccine'
+            }/>
+          </div>
+          <div>
+            <label className="label">{DETAIL_LABEL[entryType]||'Detail'}</label>
+            <input className="input" value={form.detail} onChange={F('detail')} placeholder="Optional detail"/>
+          </div>
+          <div>
+            <label className="label">{entryType==='immunization'?'Date':'Onset / Date'}</label>
+            <input className="input" type="date" value={form.onset_date} onChange={F('onset_date')}/>
+          </div>
+          {entryType!=='social'&&entryType!=='immunization'&&(
+            <div>
+              <label className="label">Status</label>
+              <select className="input" value={form.status} onChange={F('status')}>
+                <option value="active">Active</option>
+                <option value="resolved">Resolved</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          )}
+          <div style={{gridColumn:'span 2'}}>
+            <label className="label">Notes</label>
+            <input className="input" value={form.notes} onChange={F('notes')} placeholder="Optional notes"/>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Save'}</button>
+          <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQUARE HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Load the correct Square SDK (sandbox vs production) dynamically
+async function loadSquareSDK(sdkUrl){
+  if(window.Square) return;
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src=sdkUrl; s.onload=resolve; s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
+// Initialize a Square card element and attach it to a DOM node
+async function initSquareCard(appId,locationId,containerEl){
+  const payments=Square.payments(appId,locationId);
+  const card=await payments.card({
+    style:{
+      '.input-container':{borderColor:'#e2e8f0',borderRadius:'8px'},
+      '.input-container.is-focus':{borderColor:'#006aff'},
+      input:{fontSize:'15px',color:'#374151'},
+    }
+  });
+  await card.attach(containerEl);
+  return card;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQUARE PAYMENT MODAL  (one-time card charge)
+// ═══════════════════════════════════════════════════════════════════════════════
+function SquarePaymentModal({token,patient,onClose,onSave}){
+  const toast=useToast();
+  const [sqConfig,setSqConfig]=useState(null);
+  const [amount,setAmount]=useState('');
+  const [description,setDescription]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [step,setStep]=useState('form'); // form | card | done
+  const cardRef=useRef(null);
+  const containerRef=useRef(null);
+
+  useEffect(()=>{
+    api('GET','/api/square/config',null,token).then(async d=>{
+      if(!d?.enabled){toast('Square not configured — add SQUARE_ACCESS_TOKEN, SQUARE_APP_ID, SQUARE_LOCATION_ID to Railway env vars','error');return;}
+      setSqConfig(d);
+    });
+  },[token]);
+
+  // When we transition to card step, load SDK and mount card element
+  useEffect(()=>{
+    if(step!=='card'||!sqConfig||!containerRef.current||cardRef.current) return;
+    (async()=>{
+      try{
+        await loadSquareSDK(sqConfig.sdk_url);
+        cardRef.current=await initSquareCard(sqConfig.app_id,sqConfig.location_id,containerRef.current);
+      }catch(e){toast('Failed to load card form: '+e.message,'error');}
+    })();
+    return()=>{if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}};
+  },[step,sqConfig]);
+
+  const proceedToCard=e=>{
+    e.preventDefault();
+    if(!amount||parseFloat(amount)<=0){toast('Enter a valid amount','error');return;}
+    setStep('card');
+  };
+
+  const processPayment=async()=>{
+    if(!cardRef.current){toast('Card form not ready','error');return;}
+    setLoading(true);
+    try{
+      const result=await cardRef.current.tokenize();
+      if(result.status!=='OK'){
+        toast((result.errors||[]).map(e=>e.message).join(', ')||'Card tokenization failed','error');
+        setLoading(false); return;
+      }
+      const d=await api('POST','/api/square/payment',{
+        patient_id:patient.id, amount:parseFloat(amount), description, source_id:result.token
+      },token);
+      if(d?.success){
+        setStep('done');
+        toast('Payment successful!');
+        onSave({id:d.payment_id,amount:parseFloat(amount),description,status:'completed',payment_method:'square',created_at:new Date().toISOString()});
+      }
+    }catch(e){toast(e.message,'error');}
+    setLoading(false);
+  };
+
+  return(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{maxWidth:460}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'24px 28px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+            <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:22}}>💳</span> Card Payment (Square)
+            </h2>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+          </div>
+
+          {step==='form'&&(
+            <form onSubmit={proceedToCard}>
+              <div style={{marginBottom:14}}>
+                <label className="label">Patient</label>
+                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+              </div>
+              <div style={{marginBottom:14}}>
+                <label className="label">Amount (USD) *</label>
+                <input className="input" type="number" step="0.01" min="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" required autoFocus/>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label className="label">Description</label>
+                <input className="input" value={description} onChange={e=>setDescription(e.target.value)} placeholder="e.g. Office visit, copay, lab fee"/>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn" type="submit" style={{flex:1,background:'#006aff',color:'#fff'}}>
+                  Continue to Card Entry →
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
+              </div>
+            </form>
+          )}
+
+          {step==='card'&&(
+            <div>
+              <div style={{marginBottom:16,padding:'12px 16px',background:'#e8f0fe',borderRadius:8,border:'1px solid #bfdbfe'}}>
+                <div style={{fontSize:11,color:'#006aff',fontWeight:600,marginBottom:2}}>CHARGING</div>
+                <div style={{fontWeight:800,fontSize:22,color:'#1d4ed8'}}>${parseFloat(amount).toFixed(2)}</div>
+                {description&&<div style={{fontSize:13,color:'#64748b',marginTop:2}}>{description}</div>}
+              </div>
+              <div style={{marginBottom:16}}>
+                <label className="label">Card Details</label>
+                <div ref={containerRef} style={{minHeight:48,padding:'4px 0'}}/>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn" onClick={processPayment} disabled={loading} style={{flex:1,background:'#006aff',color:'#fff'}}>
+                  {loading?<Spinner/>:`Pay $${parseFloat(amount).toFixed(2)}`}
+                </button>
+                <button className="btn btn-secondary" onClick={()=>{setStep('form');if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}}}>Back</button>
+              </div>
+              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+                🔒 Secured by Square — card numbers never touch our server
+              </div>
+            </div>
+          )}
+
+          {step==='done'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>✅</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Successful!</div>
+              <div style={{color:'#64748b',marginBottom:20}}>${parseFloat(amount).toFixed(2)} collected via Square</div>
+              <button className="btn btn-success" onClick={onClose}>Done</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SQUARE MEMBERSHIP MODAL  (recurring subscription — card on file)
+// ═══════════════════════════════════════════════════════════════════════════════
+function SquareMembershipModal({token,patient,onClose,onSave}){
+  const toast=useToast();
+  const plans=[{name:'Basic',price:99},{name:'Standard',price:149},{name:'Premium',price:249},{name:'Concierge',price:499}];
+  const [selectedPlan,setSelectedPlan]=useState(plans[0]);
+  const [loading,setLoading]=useState(false);
+  const [step,setStep]=useState('plan'); // plan | card | done
+  const [sqConfig,setSqConfig]=useState(null);
+  const cardRef=useRef(null);
+  const containerRef=useRef(null);
+
+  useEffect(()=>{
+    api('GET','/api/square/config',null,token).then(async d=>{
+      if(!d?.enabled){toast('Square not configured — add SQUARE_ACCESS_TOKEN, SQUARE_APP_ID, SQUARE_LOCATION_ID','error');return;}
+      setSqConfig(d);
+    });
+  },[token]);
+
+  useEffect(()=>{
+    if(step!=='card'||!sqConfig||!containerRef.current||cardRef.current) return;
+    (async()=>{
+      try{
+        await loadSquareSDK(sqConfig.sdk_url);
+        cardRef.current=await initSquareCard(sqConfig.app_id,sqConfig.location_id,containerRef.current);
+      }catch(e){toast('Failed to load card form: '+e.message,'error');}
+    })();
+    return()=>{if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}};
+  },[step,sqConfig]);
+
+  const proceedToCard=e=>{
+    e.preventDefault();
+    setStep('card');
+  };
+
+  const confirmSubscription=async()=>{
+    if(!cardRef.current){toast('Card form not ready','error');return;}
+    setLoading(true);
+    try{
+      const result=await cardRef.current.tokenize();
+      if(result.status!=='OK'){
+        toast((result.errors||[]).map(e=>e.message).join(', ')||'Card tokenization failed','error');
+        setLoading(false); return;
+      }
+      const d=await api('POST','/api/square/subscription',{
+        patient_id:patient.id, plan_name:selectedPlan.name,
+        price_monthly:selectedPlan.price, source_id:result.token
+      },token);
+      if(d?.success){
+        setStep('done');
+        toast('Subscription activated!');
+        onSave({id:d.membership_id,plan_name:selectedPlan.name,price_monthly:selectedPlan.price,status:'active',start_date:new Date().toISOString()});
+      }
+    }catch(e){toast(e.message,'error');}
+    setLoading(false);
+  };
+
+  return(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{maxWidth:500}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'24px 28px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+            <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:22}}>💳</span> Subscribe with Square
+            </h2>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+          </div>
+
+          {step==='plan'&&(
+            <form onSubmit={proceedToCard}>
+              <div style={{marginBottom:14}}>
+                <label className="label">Patient</label>
+                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label className="label">Select Plan</label>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:8}}>
+                  {plans.map(p=>(
+                    <label key={p.name} style={{flex:'1 1 120px',padding:'12px 16px',borderRadius:10,border:`2px solid ${selectedPlan.name===p.name?'#006aff':'#e2e8f0'}`,cursor:'pointer',background:selectedPlan.name===p.name?'#e8f0fe':'#fff',textAlign:'center'}}>
+                      <input type="radio" name="plan" hidden checked={selectedPlan.name===p.name} onChange={()=>setSelectedPlan(p)}/>
+                      <div style={{fontWeight:700,color:selectedPlan.name===p.name?'#006aff':'#1e293b'}}>{p.name}</div>
+                      <div style={{fontSize:20,fontWeight:800,color:selectedPlan.name===p.name?'#1d4ed8':'#374151',margin:'4px 0'}}>${p.price}</div>
+                      <div style={{fontSize:11,color:'#94a3b8'}}>per month</div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div style={{padding:'12px 16px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',marginBottom:20,fontSize:13,color:'#15803d'}}>
+                ✓ Card saved on file · First month charged today · Cancel anytime · Powered by Square
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn" type="submit" style={{flex:1,background:'#006aff',color:'#fff'}}>
+                  {`Continue — $${selectedPlan.price}/mo →`}
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
+              </div>
+            </form>
+          )}
+
+          {step==='card'&&(
+            <div>
+              <div style={{marginBottom:16,padding:'12px 16px',background:'#e8f0fe',borderRadius:8,border:'1px solid #bfdbfe'}}>
+                <div style={{fontSize:11,color:'#006aff',fontWeight:600,marginBottom:2}}>SUBSCRIBING</div>
+                <div style={{fontWeight:800,fontSize:20,color:'#1d4ed8'}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
+                <div style={{fontSize:13,color:'#64748b',marginTop:2}}>First charge today, card saved for future months</div>
+              </div>
+              <div style={{marginBottom:16}}>
+                <label className="label">Card Details</label>
+                <div ref={containerRef} style={{minHeight:48,padding:'4px 0'}}/>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn" onClick={confirmSubscription} disabled={loading} style={{flex:1,background:'#006aff',color:'#fff'}}>
+                  {loading?<Spinner/>:`Confirm $${selectedPlan.price}/mo`}
+                </button>
+                <button className="btn btn-secondary" onClick={()=>{setStep('plan');if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}}}>Back</button>
+              </div>
+              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+                🔒 Secured by Square · Cancel anytime in the Memberships tab
+              </div>
+            </div>
+          )}
+
+          {step==='done'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>🎉</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Subscription Active!</div>
+              <div style={{color:'#64748b',marginBottom:4}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
+              <div style={{color:'#94a3b8',fontSize:13,marginBottom:20}}>Patient charged via Square · Card saved for monthly billing</div>
+              <button className="btn btn-success" onClick={onClose}>Done</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ZAPRITE MODAL  (Bitcoin / Lightning / crypto payment via hosted checkout)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ZapritePaymentModal({token,patient,onClose,onSave}){
+  const toast=useToast();
+  const [amount,setAmount]=useState('');
+  const [description,setDescription]=useState('');
+  const [loading,setLoading]=useState(false);
+  const [step,setStep]=useState('form'); // form | waiting | done | failed
+  const [orderId,setOrderId]=useState(null);
+  const [checkoutUrl,setCheckoutUrl]=useState(null);
+  const [statusMsg,setStatusMsg]=useState('Waiting for payment...');
+  const pollRef=useRef(null);
+
+  // Stop polling on unmount
+  useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current);},[]);
+
+  const createOrder=async e=>{
+    e.preventDefault();
+    if(!amount||parseFloat(amount)<=0){toast('Enter a valid amount','error');return;}
+    setLoading(true);
+    try{
+      const d=await api('POST','/api/zaprite/order',{
+        patient_id:patient.id,
+        amount:parseFloat(amount),
+        description:description||'Medical payment'
+      },token);
+      if(d?.checkout_url){
+        setOrderId(d.order_id);
+        setCheckoutUrl(d.checkout_url);
+        setStep('waiting');
+        window.open(d.checkout_url,'_blank','noopener,noreferrer');
+        pollRef.current=setInterval(()=>pollStatus(d.order_id),10000);
+      }else{
+        toast('Failed to create order','error');
+      }
+    }catch(e){toast(e.message,'error');}
+    setLoading(false);
+  };
+
+  const pollStatus=async(id)=>{
+    try{
+      const d=await api('GET',`/api/zaprite/order/${id}/status`,null,token);
+      if(!d) return;
+      if(d.status==='completed'){
+        clearInterval(pollRef.current);
+        setStep('done');
+        toast('Crypto payment confirmed!');
+        onSave({
+          id:d.payment_id,
+          amount:parseFloat(amount),
+          description:description||'Medical payment',
+          status:'completed',
+          payment_method:'crypto',
+          created_at:new Date().toISOString()
+        });
+      }else if(d.status==='failed'){
+        clearInterval(pollRef.current);
+        setStep('failed');
+        setStatusMsg('Order abandoned — no payment received.');
+      }else{
+        const labels={PENDING:'Waiting for payment...',PROCESSING:'Payment detected, confirming...',UNDERPAID:'Partial payment received — waiting for remainder...'};
+        setStatusMsg(labels[d.zaprite_status]||'Waiting for payment...');
+      }
+    }catch(_){}
+  };
+
+  const openAgain=()=>{ if(checkoutUrl) window.open(checkoutUrl,'_blank','noopener,noreferrer'); };
+
+  return(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{maxWidth:460}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'24px 28px'}}>
+          {/* Header */}
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+            <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:20,background:'#f7931a',borderRadius:6,padding:'2px 8px',color:'#fff',fontWeight:900}}>⚡</span>
+              Crypto Payment (Zaprite)
+            </h2>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+          </div>
+
+          {/* Step: form */}
+          {step==='form'&&(
+            <form onSubmit={createOrder}>
+              <div style={{marginBottom:14}}>
+                <label className="label">Patient</label>
+                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14,color:'#374151',border:'1px solid #e2e8f0'}}>
+                  {patient.first_name} {patient.last_name}
+                </div>
+              </div>
+              <div style={{marginBottom:14}}>
+                <label className="label">Amount (USD) *</label>
+                <input className="input" type="number" step="0.01" min="0.01" value={amount}
+                  onChange={e=>setAmount(e.target.value)} placeholder="0.00" required/>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label className="label">Description</label>
+                <input className="input" value={description} onChange={e=>setDescription(e.target.value)}
+                  placeholder="e.g. Office visit, Lab fee"/>
+              </div>
+              <div style={{background:'#fff7ed',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#92400e'}}>
+                <strong>How it works:</strong> A Zaprite checkout page opens in a new tab. The patient can pay with Bitcoin (on-chain or Lightning), USDT, USDC, and more. This page updates automatically when payment is confirmed.
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn btn-primary" style={{background:'#f7931a',flex:1}} type="submit" disabled={loading}>
+                  {loading?<Spinner/>:<><span style={{fontSize:14}}>⚡</span> Create Zaprite Order</>}
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
+              </div>
+              <div style={{marginTop:10,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+                🔒 Powered by Zaprite · Bitcoin &amp; Lightning supported
+              </div>
+            </form>
+          )}
+
+          {/* Step: waiting for payment */}
+          {step==='waiting'&&(
+            <div style={{textAlign:'center',padding:'12px 0'}}>
+              <div style={{fontSize:48,marginBottom:12}}>⏳</div>
+              <div style={{fontWeight:700,fontSize:16,color:'#1e293b',marginBottom:8}}>
+                Zaprite Checkout Opened
+              </div>
+              <div style={{color:'#64748b',fontSize:14,marginBottom:16}}>{statusMsg}</div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:20,color:'#64748b',fontSize:13}}>
+                <Spinner/> Checking payment status every 10 seconds…
+              </div>
+              <div style={{background:'#f8fafc',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#475569',textAlign:'left'}}>
+                <div style={{fontWeight:600,marginBottom:4}}>💡 Lightning payments confirm instantly.</div>
+                <div>On-chain Bitcoin typically confirms within a few minutes.</div>
+              </div>
+              <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+                <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={openAgain}>
+                  <span style={{fontSize:13}}>↗</span> Re-open Checkout
+                </button>
+                <button className="btn btn-secondary" onClick={onClose}>Close (keep waiting)</button>
+              </div>
+              <div style={{marginTop:12,fontSize:11,color:'#94a3b8'}}>
+                Amount: <strong>${parseFloat(amount).toFixed(2)}</strong> · Order: {orderId?.slice(0,8)}…
+              </div>
+            </div>
+          )}
+
+          {/* Step: confirmed */}
+          {step==='done'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>✅</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Confirmed!</div>
+              <div style={{color:'#64748b',marginBottom:4}}>
+                ${parseFloat(amount).toFixed(2)} received via Zaprite
+              </div>
+              <div style={{color:'#94a3b8',fontSize:13,marginBottom:20}}>
+                {description||'Medical payment'} · Payment recorded in history
+              </div>
+              <button className="btn btn-success" onClick={onClose}>Done</button>
+            </div>
+          )}
+
+          {/* Step: failed / abandoned */}
+          {step==='failed'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>❌</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#dc2626',marginBottom:8}}>Payment Failed</div>
+              <div style={{color:'#64748b',marginBottom:20}}>{statusMsg}</div>
+              <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+                <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setStep('form')}>Try Again</button>
+                <button className="btn btn-secondary" onClick={onClose}>Close</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentForm({token,patient,onSave,onCancel}){
+  const toast=useToast();
+  const [form,setForm]=useState({amount:'',description:'',payment_method:'card'});
+  const [saving,setSaving]=useState(false);
+  const submit=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/payments',{...form,patient_id:patient.id,amount:parseFloat(form.amount)},token);if(d){toast('Payment recorded');onSave(d);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+  const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+  return(
+    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+      <h3 style={{fontWeight:700,marginBottom:12}}>Record Payment — {patient.first_name} {patient.last_name}</h3>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div><label className="label">Amount ($) *</label><input className="input" type="number" step="0.01" min="0" value={form.amount} onChange={s('amount')} required/></div>
+          <div><label className="label">Method</label><select className="input" value={form.payment_method} onChange={s('payment_method')}><option value="card">Credit Card</option><option value="cash">Cash</option><option value="check">Check</option><option value="ach">ACH</option></select></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Description</label><input className="input" value={form.description} onChange={s('description')} placeholder="e.g. Office visit copay, Monthly membership"/></div>
+        </div>
+        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Record Payment'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+      </form>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FAX CENTER  (global view)
+// ═══════════════════════════════════════════════════════════════════════════════
+function FaxCenter({token}){
+  const toast=useToast();
+  const [faxes,setFaxes]=useState([]);
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({to_number:'',subject:'',pages:1,notes:''});
+  const [saving,setSaving]=useState(false);
+
+  useEffect(()=>{api('GET','/api/faxes',null,token).then(d=>d&&setFaxes(d));},[token]);
+
+  const send=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/faxes/send',form,token);if(d){toast('Fax queued');setFaxes([d,...faxes]);setShowForm(false);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+
+  const statusBadge=s=>{const m={sent:'badge-green',received:'badge-blue',queued:'badge-yellow',failed:'badge-red'};return<span className={`badge ${m[s]||'badge-gray'}`}>{s}</span>;};
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Fax Center</h1>
+        <button className="btn btn-primary" onClick={()=>setShowForm(true)}><Icon name="send" size={15}/>Send Fax</button>
+      </div>
+      {showForm&&(
+        <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
+          <h3 style={{fontWeight:700,marginBottom:12}}>Compose Fax</h3>
+          <form onSubmit={send}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div><label className="label">To Fax # *</label><input className="input" value={form.to_number} onChange={e=>setForm({...form,to_number:e.target.value})} placeholder="+15551234567" required/></div>
+              <div><label className="label">Pages</label><input className="input" type="number" min={1} value={form.pages} onChange={e=>setForm({...form,pages:e.target.value})}/></div>
+              <div style={{gridColumn:'span 2'}}><label className="label">Subject</label><input className="input" value={form.subject} onChange={e=>setForm({...form,subject:e.target.value})}/></div>
+              <div style={{gridColumn:'span 2'}}><label className="label">Cover Sheet Notes</label><textarea className="input" rows={3} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></div>
+            </div>
+            <div style={{display:'flex',gap:8}}>
+              <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:<><Icon name="send" size={14}/>Send</>}</button>
+              <button className="btn btn-secondary" type="button" onClick={()=>setShowForm(false)}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+      <div className="card">
+        {faxes.length===0?<div style={{textAlign:'center',color:'#94a3b8',padding:40}}>No faxes yet</div>:faxes.map(f=>(
+          <div key={f.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{width:36,height:36,borderRadius:8,background:f.direction==='sent'?'#dbeafe':'#dcfce7',display:'flex',alignItems:'center',justifyContent:'center'}}>
+                <Icon name={f.direction==='sent'?'send':'fax'} size={16}/>
+              </div>
+              <div>
+                <div style={{fontWeight:500,fontSize:14}}>{f.subject||'(no subject)'}</div>
+                <div style={{fontSize:12,color:'#94a3b8'}}>{f.direction==='sent'?'To':'From'}: {f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
+              </div>
+            </div>
+            {statusBadge(f.status)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SETTINGS  (admin: user mgmt + audit log)
+// ═══════════════════════════════════════════════════════════════════════════════
+function Settings({token,user}){
+  const toast=useToast();
+  const [tab,setTab]=useState('users');
+  const [users,setUsers]=useState([]);
+  const [logs,setLogs]=useState([]);
+  const [showForm,setShowForm]=useState(false);
+  const [form,setForm]=useState({username:'',full_name:'',email:'',npi_number:'',specialty:'',role:'physician',password:''});
+  const [saving,setSaving]=useState(false);
+  const [pwForm,setPwForm]=useState({current_password:'',new_password:'',confirm:''});
+  const [pwSaving,setPwSaving]=useState(false);
+
+  useEffect(()=>{
+    if(user.role==='admin'){
+      api('GET','/api/users',null,token).then(d=>d&&setUsers(d));
+      api('GET','/api/audit-logs',null,token).then(d=>d&&setLogs(d));
+    }
+  },[token,user.role]);
+
+  const createUser=async e=>{e.preventDefault();setSaving(true);
+    try{const d=await api('POST','/api/users',form,token);if(d){toast('User created');setUsers([...users,d]);setShowForm(false);}}
+    catch(e){toast(e.message,'error');}setSaving(false);};
+
+  const toggleActive=async(u)=>{
+    const d=await api('PUT',`/api/users/${u.id}`,{is_active:!u.is_active},token).catch(e=>{toast(e.message,'error');return null;});
+    if(d) setUsers(users.map(x=>x.id===u.id?{...x,is_active:!x.is_active}:x));
+  };
+
+  const changePw=async e=>{e.preventDefault();
+    if(pwForm.new_password!==pwForm.confirm){toast('Passwords do not match','error');return;}
+    setPwSaving(true);
+    try{await api('PUT','/api/auth/me/password',{current_password:pwForm.current_password,new_password:pwForm.new_password},token);toast('Password changed');setPwForm({current_password:'',new_password:'',confirm:''});}
+    catch(e){toast(e.message,'error');}setPwSaving(false);};
+
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:20}}>Settings</h1>
+      <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16}}>
+        {user.role==='admin'&&<button className={`tab${tab==='users'?' active':''}`} onClick={()=>setTab('users')}>Users</button>}
+        {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>setTab('audit')}>Audit Log</button>}
+        <button className={`tab${tab==='profile'?' active':''}`} onClick={()=>setTab('profile')}>My Profile</button>
+      </div>
+
+      {tab==='users'&&user.role==='admin'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+            <button className="btn btn-primary" onClick={()=>setShowForm(true)}><Icon name="plus" size={15}/>Add User</button>
+          </div>
+          {showForm&&(
+            <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
+              <h3 style={{fontWeight:700,marginBottom:12}}>New User</h3>
+              <form onSubmit={createUser}>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+                  {[['Username','username'],['Full Name','full_name'],['Email','email'],['NPI Number','npi_number'],['Specialty','specialty']].map(([l,k])=>(
+                    <div key={k}><label className="label">{l}</label><input className="input" value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} required={k==='username'}/></div>
+                  ))}
+                  <div><label className="label">Role</label><select className="input" value={form.role} onChange={e=>setForm({...form,role:e.target.value})}><option value="physician">Physician</option><option value="staff">Staff</option><option value="admin">Admin</option></select></div>
+                  <div><label className="label">Password *</label><input className="input" type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} required/></div>
+                </div>
+                <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create User'}</button><button className="btn btn-secondary" type="button" onClick={()=>setShowForm(false)}>Cancel</button></div>
+              </form>
+            </div>
+          )}
+          <div className="card">
+            {users.map(u=>(
+              <div key={u.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
+                <div>
+                  <div style={{fontWeight:500}}>{u.full_name} <span style={{fontSize:12,color:'#94a3b8'}}>@{u.username}</span></div>
+                  <div style={{fontSize:13,color:'#64748b'}}>{u.specialty} · NPI: {u.npi_number||'—'}</div>
+                  <span className={`badge ${u.role==='admin'?'badge-red':u.role==='physician'?'badge-blue':'badge-gray'}`}>{u.role}</span>
+                </div>
+                <button className={`btn ${u.is_active?'btn-warning':'btn-success'}`} onClick={()=>toggleActive(u)} style={{fontSize:12}}>
+                  {u.is_active?'Disable':'Enable'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab==='audit'&&user.role==='admin'&&(
+        <div className="card" style={{overflowX:'auto'}}>
+          <h3 style={{fontWeight:600,marginBottom:12}}>HIPAA Audit Log (last 500 events)</h3>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style={{borderBottom:'2px solid #e2e8f0'}}>
+              {['Timestamp','User','Action','Resource','Details'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:'#475569',fontWeight:600}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{logs.map(l=>(
+              <tr key={l.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
+                <td style={{padding:'8px 10px',whiteSpace:'nowrap',color:'#64748b'}}>{l.timestamp?.slice(0,19).replace('T',' ')}</td>
+                <td style={{padding:'8px 10px'}}>{l.user_id}</td>
+                <td style={{padding:'8px 10px'}}><span className="badge badge-blue">{l.action}</span></td>
+                <td style={{padding:'8px 10px'}}>{l.resource_type} #{l.resource_id}</td>
+                <td style={{padding:'8px 10px',color:'#94a3b8',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+
+      {tab==='profile'&&(
+        <div className="card" style={{maxWidth:480}}>
+          <h3 style={{fontWeight:600,marginBottom:4}}>Change Password</h3>
+          <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Logged in as: <b>{user.full_name}</b> ({user.role})</p>
+          <form onSubmit={changePw}>
+            {[['Current Password','current_password'],['New Password','new_password'],['Confirm New Password','confirm']].map(([l,k])=>(
+              <div key={k} style={{marginBottom:12}}>
+                <label className="label">{l}</label>
+                <input className="input" type="password" value={pwForm[k]} onChange={e=>setPwForm({...pwForm,[k]:e.target.value})} required/>
+              </div>
+            ))}
+            <button className="btn btn-primary" type="submit" disabled={pwSaving}>{pwSaving?<Spinner/>:'Update Password'}</button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHEDULING MODULE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const PROVIDER_COLORS=['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
+const HOURS=Array.from({length:13},(_,i)=>i+7); // 7am–7pm
+const PX_PER_MIN=1; // 1px per minute → 60px per hour
+const DAY_START_MIN=7*60; // 7:00 AM in minutes
+
+function fmtTime(dt){
+  const d=new Date(dt);
+  return d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true});
+}
+function fmtDate(dt){
+  return new Date(dt).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+function dateKey(d){
+  const dt=new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+function getMonday(d){
+  const dt=new Date(d); const day=dt.getDay();
+  dt.setDate(dt.getDate()-day+(day===0?-6:1));
+  dt.setHours(0,0,0,0); return dt;
+}
+
+// ── Month View ────────────────────────────────────────────────────────────────
+function MonthView({currentDate,appointments,providers,getProviderColor,onDayClick,onApptClick,onNewAppt}){
+  const year=currentDate.getFullYear(), month=currentDate.getMonth();
+  const firstDay=new Date(year,month,1).getDay(); // 0=Sun
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const todayKey=dateKey(new Date());
+
+  // Build 6×7 grid
+  const cells=[];
+  const offset=firstDay===0?6:firstDay-1; // shift to Mon start
+  for(let i=0;i<42;i++){
+    const dayNum=i-offset+1;
+    if(dayNum<1||dayNum>daysInMonth){cells.push(null);continue;}
+    const d=new Date(year,month,dayNum);
+    cells.push(d);
+  }
+
+  const apptsByDay={};
+  appointments.forEach(a=>{const k=dateKey(a.start_time);(apptsByDay[k]=apptsByDay[k]||[]).push(a);});
+
+  const DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return(
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',borderBottom:'1px solid #e2e8f0'}}>
+        {DAYS.map(d=><div key={d} style={{padding:'8px 0',textAlign:'center',fontSize:12,fontWeight:600,color:'#64748b'}}>{d}</div>)}
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
+        {cells.map((d,i)=>{
+          if(!d) return <div key={i} style={{minHeight:100,background:'#f8fafc',borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9'}}/>;
+          const k=dateKey(d); const dayAppts=(apptsByDay[k]||[]).sort((a,b)=>a.start_time.localeCompare(b.start_time));
+          const isToday=k===todayKey;
+          return(
+            <div key={k} style={{minHeight:100,borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9',padding:4,cursor:'pointer',background:isToday?'#eff6ff':'#fff'}}
+              onClick={()=>onDayClick(d)}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
+                <span style={{fontSize:13,fontWeight:isToday?700:400,color:isToday?'#2563eb':'#374151',
+                  background:isToday?'#2563eb':'transparent',color:isToday?'#fff':'#374151',
+                  borderRadius:'50%',width:22,height:22,display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  {d.getDate()}
+                </span>
+                <button style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:16,lineHeight:1,padding:'0 2px'}}
+                  onClick={e=>{e.stopPropagation();onNewAppt({date:d});}}>+</button>
+              </div>
+              {dayAppts.slice(0,3).map(a=>(
+                <div key={a.id} onClick={e=>{e.stopPropagation();onApptClick(a);}}
+                  style={{fontSize:11,padding:'2px 5px',borderRadius:4,marginBottom:2,
+                    background:a.color||getProviderColor(a.provider_id),color:'#fff',
+                    overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis',cursor:'pointer'}}>
+                  {fmtTime(a.start_time)} {a.title}
+                </div>
+              ))}
+              {dayAppts.length>3&&<div style={{fontSize:10,color:'#64748b',paddingLeft:4}}>+{dayAppts.length-3} more</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Week View ─────────────────────────────────────────────────────────────────
+function WeekView({currentDate,appointments,providers,apptTypes,getProviderColor,onApptClick,onSlotClick}){
+  const monday=getMonday(currentDate);
+  const days=Array.from({length:7},(_,i)=>{const d=new Date(monday);d.setDate(monday.getDate()+i);return d;});
+  const todayKey=dateKey(new Date());
+
+  const apptsByDay={};
+  appointments.forEach(a=>{const k=dateKey(a.start_time);(apptsByDay[k]=apptsByDay[k]||[]).push(a);});
+
+  const DAY_LABELS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return(
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      {/* Header row */}
+      <div style={{display:'grid',gridTemplateColumns:'56px repeat(7,1fr)',borderBottom:'2px solid #e2e8f0',background:'#f8fafc'}}>
+        <div/>
+        {days.map((d,i)=>{
+          const k=dateKey(d); const isToday=k===todayKey;
+          return(
+            <div key={k} style={{padding:'10px 4px',textAlign:'center',borderLeft:'1px solid #e2e8f0'}}>
+              <div style={{fontSize:11,color:'#64748b',fontWeight:500}}>{DAY_LABELS[i]}</div>
+              <div style={{fontSize:18,fontWeight:700,color:isToday?'#2563eb':'#1e293b',
+                background:isToday?'#eff6ff':'transparent',borderRadius:6,display:'inline-block',padding:'2px 8px'}}>
+                {d.getDate()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {/* Time grid */}
+      <div style={{display:'flex',overflowY:'auto',maxHeight:640}}>
+        {/* Hour labels */}
+        <div style={{width:56,flexShrink:0,borderRight:'1px solid #e2e8f0'}}>
+          {HOURS.map(h=>(
+            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 6px 0',fontSize:11,color:'#94a3b8',textAlign:'right'}}>
+              {h===12?'12 PM':h<12?`${h} AM`:`${h-12} PM`}
+            </div>
+          ))}
+        </div>
+        {/* Day columns */}
+        {days.map((d,di)=>{
+          const k=dateKey(d);
+          const dayAppts=(apptsByDay[k]||[]);
+          return(
+            <div key={k} style={{flex:1,borderLeft:'1px solid #e2e8f0',position:'relative',minHeight:780}}>
+              {/* Hour slots (clickable) */}
+              {HOURS.map(h=>(
+                <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',cursor:'pointer'}}
+                  onClick={()=>onSlotClick(d,h)}/>
+              ))}
+              {/* Appointments */}
+              {dayAppts.map(a=>{
+                const start=new Date(a.start_time);
+                const startMin=start.getHours()*60+start.getMinutes();
+                const top=(startMin-DAY_START_MIN)*PX_PER_MIN;
+                const height=Math.max(a.duration_minutes*PX_PER_MIN,22);
+                if(top<0||top>720) return null;
+                return(
+                  <div key={a.id} onClick={e=>{e.stopPropagation();onApptClick(a);}}
+                    style={{position:'absolute',left:2,right:2,top,height,
+                      background:a.color||getProviderColor(a.provider_id),
+                      borderRadius:5,padding:'2px 5px',cursor:'pointer',
+                      overflow:'hidden',zIndex:1,boxShadow:'0 1px 3px rgba(0,0,0,.15)'}}>
+                    <div style={{fontSize:11,fontWeight:600,color:'#fff',lineHeight:1.3,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                      {a.title}
+                    </div>
+                    {height>30&&<div style={{fontSize:10,color:'rgba(255,255,255,.85)'}}>{fmtTime(a.start_time)} · {a.patient_name||''}</div>}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Day View ──────────────────────────────────────────────────────────────────
+function DayView({currentDate,appointments,providers,apptTypes,getProviderColor,onApptClick,onSlotClick}){
+  const todayKey=dateKey(currentDate);
+  const dayAppts=appointments.filter(a=>dateKey(a.start_time)===todayKey)
+    .sort((a,b)=>a.start_time.localeCompare(b.start_time));
+
+  return(
+    <div className="card" style={{padding:0,overflow:'hidden'}}>
+      <div style={{display:'flex',overflowY:'auto',maxHeight:700}}>
+        {/* Hour labels */}
+        <div style={{width:64,flexShrink:0,borderRight:'1px solid #e2e8f0'}}>
+          <div style={{height:40,borderBottom:'1px solid #e2e8f0'}}/>
+          {HOURS.map(h=>(
+            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 8px 0',fontSize:12,color:'#94a3b8',textAlign:'right'}}>
+              {h===12?'12 PM':h<12?`${h} AM`:`${h-12} PM`}
+            </div>
+          ))}
+        </div>
+        {/* Main column */}
+        <div style={{flex:1,position:'relative'}}>
+          {/* Provider headers */}
+          <div style={{height:40,borderBottom:'2px solid #e2e8f0',display:'flex',alignItems:'center',padding:'0 12px',gap:8,flexWrap:'wrap'}}>
+            {providers.map((p,i)=>(
+              <span key={p.id} style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:12,
+                background:PROVIDER_COLORS[i%PROVIDER_COLORS.length],color:'#fff'}}>
+                {p.full_name}
+              </span>
+            ))}
+            {providers.length===0&&<span style={{fontSize:12,color:'#94a3b8'}}>No providers</span>}
+          </div>
+          {/* Hour slots */}
+          <div style={{position:'relative',minHeight:780}}>
+            {HOURS.map(h=>(
+              <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',cursor:'pointer'}}
+                onClick={()=>onSlotClick(currentDate,h)}/>
+            ))}
+            {/* Appointments */}
+            {dayAppts.map((a,idx)=>{
+              const start=new Date(a.start_time);
+              const startMin=start.getHours()*60+start.getMinutes();
+              const top=(startMin-DAY_START_MIN)*PX_PER_MIN+40;
+              const height=Math.max(a.duration_minutes*PX_PER_MIN,28);
+              if(top<40) return null;
+              return(
+                <div key={a.id} onClick={e=>{e.stopPropagation();onApptClick(a);}}
+                  style={{position:'absolute',left:4+idx*4,right:4,top,height,
+                    background:a.color||getProviderColor(a.provider_id),
+                    borderRadius:6,padding:'4px 8px',cursor:'pointer',zIndex:idx+1,
+                    boxShadow:'0 2px 6px rgba(0,0,0,.15)'}}>
+                  <div style={{fontSize:12,fontWeight:700,color:'#fff'}}>{a.title}</div>
+                  <div style={{fontSize:11,color:'rgba(255,255,255,.9)'}}>{fmtTime(a.start_time)}–{fmtTime(a.end_time)}</div>
+                  {height>50&&<div style={{fontSize:11,color:'rgba(255,255,255,.85)'}}>{a.patient_name||''}</div>}
+                  {height>65&&<div style={{fontSize:11,color:'rgba(255,255,255,.8)'}}>{a.provider_name||''}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      {/* Today's agenda list */}
+      {dayAppts.length===0?(
+        <div style={{textAlign:'center',padding:'32px',color:'#94a3b8',fontSize:14}}>No appointments scheduled · Click a time slot to add one</div>
+      ):(
+        <div style={{borderTop:'1px solid #e2e8f0',padding:'12px 16px'}}>
+          <div style={{fontSize:12,fontWeight:600,color:'#64748b',marginBottom:8}}>AGENDA ({dayAppts.length})</div>
+          {dayAppts.map(a=>(
+            <div key={a.id} onClick={()=>onApptClick(a)}
+              style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,cursor:'pointer',marginBottom:4,border:'1px solid #f1f5f9'}}
+              onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+              onMouseLeave={e=>e.currentTarget.style.background=''}>
+              <div style={{width:4,height:40,borderRadius:2,background:a.color||getProviderColor(a.provider_id),flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:14}}>{a.title}</div>
+                <div style={{fontSize:12,color:'#64748b'}}>{fmtTime(a.start_time)}–{fmtTime(a.end_time)} · {a.provider_name}</div>
+                {a.patient_name&&<div style={{fontSize:12,color:'#94a3b8'}}>{a.patient_name}</div>}
+              </div>
+              <span className={`badge ${a.status==='completed'?'badge-green':a.status==='confirmed'?'badge-blue':a.status==='cancelled'?'badge-red':'badge-yellow'}`} style={{fontSize:11}}>
+                {a.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Appointment Modal ─────────────────────────────────────────────────────────
+function AppointmentModal({token,user,appointment,defaults,providers,apptTypes,patients,onClose,onSave,onDelete}){
+  const toast=useToast();
+  const isEdit=!!appointment;
+
+  const defaultDate=defaults?.date?dateKey(defaults.date):(isEdit?appointment.start_time?.slice(0,10):dateKey(new Date()));
+  const defaultHour=defaults?.hour||9;
+  const defaultTime=`${String(defaultHour).padStart(2,'0')}:00`;
+  const defaultProvider=defaults?.provider_id||(isEdit?appointment.provider_id:(providers[0]?.id||''));
+
+  const [form,setForm]=useState({
+    title:           isEdit?appointment.title:'',
+    patient_id:      isEdit?appointment.patient_id:'',
+    provider_id:     isEdit?appointment.provider_id:defaultProvider,
+    appointment_type_id: isEdit?appointment.appointment_type_id:'',
+    date:            defaultDate,
+    start_time:      isEdit?new Date(appointment.start_time).toTimeString().slice(0,5):defaultTime,
+    duration:        isEdit?appointment.duration_minutes:30,
+    status:          isEdit?appointment.status:'scheduled',
+    notes:           isEdit?appointment.notes:'',
+  });
+  const [saving,setSaving]=useState(false);
+  const [patientSearch,setPatientSearch]=useState(isEdit?appointment.patient_name||'':'');
+  const [showPatientList,setShowPatientList]=useState(false);
+
+  const s=k=>v=>setForm(f=>({...f,[k]:v}));
+  const sf=k=>e=>s(k)(e.target.value);
+
+  // Auto-fill title and duration from appointment type
+  useEffect(()=>{
+    if(!form.appointment_type_id) return;
+    const at=apptTypes.find(t=>t.id===parseInt(form.appointment_type_id));
+    if(at){
+      if(!form.title||apptTypes.some(t=>t.name===form.title)) setForm(f=>({...f,title:at.name,duration:at.duration_minutes}));
+      else setForm(f=>({...f,duration:at.duration_minutes}));
+    }
+  },[form.appointment_type_id]);
+
+  const filteredPatients=patients.filter(p=>{
+    const q=patientSearch.toLowerCase();
+    return `${p.first_name} ${p.last_name}`.toLowerCase().includes(q)||p.phone?.includes(q);
+  }).slice(0,8);
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!form.provider_id){toast('Please select a provider','error');return;}
+    setSaving(true);
+    try{
+      const [h,m]=form.start_time.split(':').map(Number);
+      const startDt=new Date(`${form.date}T${form.start_time}:00`);
+      const endDt=new Date(startDt.getTime()+parseInt(form.duration)*60000);
+      const payload={
+        title:form.title||'Appointment',
+        patient_id:form.patient_id||null,
+        provider_id:parseInt(form.provider_id),
+        appointment_type_id:form.appointment_type_id?parseInt(form.appointment_type_id):null,
+        start_time:startDt.toISOString(),
+        end_time:endDt.toISOString(),
+        status:form.status,
+        notes:form.notes,
+      };
+      const d=isEdit
+        ?await api('PUT',`/api/appointments/${appointment.id}`,payload,token)
+        :await api('POST','/api/appointments',payload,token);
+      if(d) onSave(d);
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const cancelAppt=async()=>{
+    if(!confirm('Cancel this appointment?')) return;
+    setSaving(true);
+    try{
+      await api('DELETE',`/api/appointments/${appointment.id}`,null,token);
+      onDelete(appointment.id);
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const STATUS_OPTIONS=['scheduled','confirmed','completed','no_show','cancelled'];
+
+  return(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{maxWidth:500}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'24px 28px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+            <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
+              <Icon name="calendar" size={20}/> {isEdit?'Edit Appointment':'New Appointment'}
+            </h2>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8'}}>✕</button>
+          </div>
+          <form onSubmit={submit}>
+            {/* Appointment type */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div style={{gridColumn:'span 2'}}>
+                <label className="label">Appointment Type</label>
+                <select className="input" value={form.appointment_type_id} onChange={sf('appointment_type_id')}>
+                  <option value="">— No type —</option>
+                  {apptTypes.map(t=><option key={t.id} value={t.id}>{t.name} ({t.duration_minutes} min)</option>)}
+                </select>
+              </div>
+              <div style={{gridColumn:'span 2'}}>
+                <label className="label">Title *</label>
+                <input className="input" value={form.title} onChange={sf('title')} placeholder="e.g. Follow-up, Annual Physical" required/>
+              </div>
+            </div>
+            {/* Patient */}
+            <div style={{marginBottom:12,position:'relative'}}>
+              <label className="label">Patient</label>
+              <input className="input" value={patientSearch} onChange={e=>{setPatientSearch(e.target.value);setShowPatientList(true);if(!e.target.value)s('patient_id')('');}}
+                onFocus={()=>setShowPatientList(true)} placeholder="Search patient name…" autoComplete="off"/>
+              {showPatientList&&patientSearch&&filteredPatients.length>0&&(
+                <div style={{position:'absolute',top:'100%',left:0,right:0,background:'#fff',border:'1px solid #e2e8f0',borderRadius:8,zIndex:50,boxShadow:'0 4px 12px rgba(0,0,0,.1)',maxHeight:200,overflowY:'auto'}}>
+                  {filteredPatients.map(p=>(
+                    <div key={p.id} onClick={()=>{s('patient_id')(p.id);setPatientSearch(`${p.first_name} ${p.last_name}`);setShowPatientList(false);}}
+                      style={{padding:'8px 12px',cursor:'pointer',fontSize:14,borderBottom:'1px solid #f1f5f9'}}
+                      onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+                      onMouseLeave={e=>e.currentTarget.style.background=''}>
+                      {p.first_name} {p.last_name}
+                      {p.dob&&<span style={{color:'#94a3b8',fontSize:12}}> · DOB {p.dob}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Provider + Status */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+              <div>
+                <label className="label">Provider *</label>
+                <select className="input" value={form.provider_id} onChange={sf('provider_id')} required>
+                  <option value="">Select provider</option>
+                  {providers.map(p=><option key={p.id} value={p.id}>{p.full_name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Status</label>
+                <select className="input" value={form.status} onChange={sf('status')}>
+                  {STATUS_OPTIONS.map(s=><option key={s} value={s} style={{textTransform:'capitalize'}}>{s.replace('_',' ')}</option>)}
+                </select>
+              </div>
+            </div>
+            {/* Date + Time + Duration */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}}>
+              <div>
+                <label className="label">Date *</label>
+                <input className="input" type="date" value={form.date} onChange={sf('date')} required/>
+              </div>
+              <div>
+                <label className="label">Start Time *</label>
+                <input className="input" type="time" value={form.start_time} onChange={sf('start_time')} required/>
+              </div>
+              <div>
+                <label className="label">Duration (min)</label>
+                <select className="input" value={form.duration} onChange={sf('duration')}>
+                  {[15,20,30,45,60,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+                </select>
+              </div>
+            </div>
+            {/* Notes */}
+            <div style={{marginBottom:20}}>
+              <label className="label">Notes</label>
+              <textarea className="input" rows={2} value={form.notes} onChange={sf('notes')} placeholder="Visit reason, special instructions…"/>
+            </div>
+            <div style={{display:'flex',gap:8,justifyContent:'space-between'}}>
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:<><Icon name="check" size={15}/>{isEdit?'Save Changes':'Schedule'}</>}</button>
+                <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
+              </div>
+              {isEdit&&<button className="btn btn-danger" type="button" onClick={cancelAppt} disabled={saving}><Icon name="x" size={14}/>Cancel Appt</button>}
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Appointment Type Settings ─────────────────────────────────────────────────
+function AppointmentTypeSettings({token,apptTypes,setApptTypes,providers}){
+  const toast=useToast();
+  const [form,setForm]=useState({name:'',duration_minutes:30,color:'#2563eb',description:''});
+  const [editId,setEditId]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const save=async e=>{
+    e.preventDefault(); setSaving(true);
+    try{
+      const d=editId
+        ?await api('PUT',`/api/appointment-types/${editId}`,form,token)
+        :await api('POST','/api/appointment-types',form,token);
+      if(d){
+        if(editId) setApptTypes(prev=>prev.map(t=>t.id===editId?d:t));
+        else setApptTypes(prev=>[...prev,d]);
+        setForm({name:'',duration_minutes:30,color:'#2563eb',description:''});
+        setEditId(null);
+        toast(editId?'Type updated':'Type created');
+      }
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const del=async(id)=>{
+    await api('DELETE',`/api/appointment-types/${id}`,null,token);
+    setApptTypes(prev=>prev.filter(t=>t.id!==id));
+    toast('Removed');
+  };
+
+  const startEdit=t=>{setEditId(t.id);setForm({name:t.name,duration_minutes:t.duration_minutes,color:t.color,description:t.description||''});};
+
+  return(
+    <div className="card" style={{marginBottom:16,border:'2px solid #e2e8f0'}}>
+      <h3 style={{fontWeight:700,fontSize:15,marginBottom:14}}>⚙️ Appointment Types</h3>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:16}}>
+        {apptTypes.map(t=>(
+          <div key={t.id} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:8,background:'#f8fafc',border:'1px solid #e2e8f0'}}>
+            <div style={{width:12,height:12,borderRadius:3,background:t.color,flexShrink:0}}/>
+            <span style={{fontSize:13,fontWeight:500}}>{t.name}</span>
+            <span style={{fontSize:11,color:'#94a3b8'}}>{t.duration_minutes}m</span>
+            <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',cursor:'pointer',color:'#64748b',padding:0,fontSize:12}}>✏️</button>
+            <button onClick={()=>del(t.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',padding:0,fontSize:12}}>✕</button>
+          </div>
+        ))}
+        {apptTypes.length===0&&<span style={{fontSize:13,color:'#94a3b8'}}>No types yet — add one below</span>}
+      </div>
+      <form onSubmit={save}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr auto auto 2fr auto',gap:8,alignItems:'end'}}>
+          <div>
+            <label className="label">Name *</label>
+            <input className="input" value={form.name} onChange={sf('name')} placeholder="e.g. New Patient" required/>
+          </div>
+          <div>
+            <label className="label">Duration</label>
+            <select className="input" value={form.duration_minutes} onChange={sf('duration_minutes')}>
+              {[15,20,30,45,60,90,120].map(m=><option key={m} value={m}>{m} min</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Color</label>
+            <input type="color" value={form.color} onChange={sf('color')} style={{width:44,height:38,border:'1px solid #e2e8f0',borderRadius:8,padding:2,cursor:'pointer'}}/>
+          </div>
+          <div>
+            <label className="label">Description</label>
+            <input className="input" value={form.description} onChange={sf('description')} placeholder="Optional"/>
+          </div>
+          <div>
+            <label className="label">&nbsp;</label>
+            <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:editId?'Update':'Add'}</button>
+          </div>
+        </div>
+        {editId&&<button type="button" className="btn btn-secondary" style={{marginTop:8}} onClick={()=>{setEditId(null);setForm({name:'',duration_minutes:30,color:'#2563eb',description:''});}}>Cancel edit</button>}
+      </form>
+    </div>
+  );
+}
+
+// ── Schedule Module (main container) ─────────────────────────────────────────
+function ScheduleModule({token,user}){
+  const toast=useToast();
+  const [view,setView]=useState('week');
+  const [currentDate,setCurrentDate]=useState(new Date());
+  const [appointments,setAppointments]=useState([]);
+  const [providers,setProviders]=useState([]);
+  const [apptTypes,setApptTypes]=useState([]);
+  const [patients,setPatients]=useState([]);
+  const [selectedProvider,setSelectedProvider]=useState('all');
+  const [selectedAppt,setSelectedAppt]=useState(null);
+  const [showModal,setShowModal]=useState(false);
+  const [newDefaults,setNewDefaults]=useState(null);
+  const [showSettings,setShowSettings]=useState(false);
+
+  const getProviderColor=useCallback(pid=>{
+    const idx=providers.findIndex(p=>p.id===pid);
+    return PROVIDER_COLORS[idx%PROVIDER_COLORS.length]||'#2563eb';
+  },[providers]);
+
+  const loadAppointments=useCallback(async()=>{
+    let start,end;
+    const d=new Date(currentDate);
+    if(view==='day'){
+      start=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+      end=new Date(d.getFullYear(),d.getMonth(),d.getDate()+1);
+    }else if(view==='week'){
+      start=getMonday(d);
+      end=new Date(start); end.setDate(start.getDate()+7);
+    }else{
+      start=new Date(d.getFullYear(),d.getMonth(),1);
+      end=new Date(d.getFullYear(),d.getMonth()+1,1);
+    }
+    let url=`/api/appointments?start=${start.toISOString()}&end=${end.toISOString()}`;
+    if(selectedProvider!=='all') url+=`&provider_id=${selectedProvider}`;
+    const data=await api('GET',url,null,token);
+    if(data) setAppointments(data);
+  },[currentDate,view,selectedProvider,token]);
+
+  useEffect(()=>{
+    api('GET','/api/providers',null,token).then(d=>d&&setProviders(d));
+    api('GET','/api/appointment-types',null,token).then(d=>d&&setApptTypes(d));
+    api('GET','/api/patients',null,token).then(d=>d&&setPatients(d));
+  },[token]);
+
+  useEffect(()=>{loadAppointments();},[loadAppointments]);
+
+  const navigate=dir=>{
+    const d=new Date(currentDate);
+    if(view==='day') d.setDate(d.getDate()+dir);
+    else if(view==='week') d.setDate(d.getDate()+dir*7);
+    else d.setMonth(d.getMonth()+dir);
+    setCurrentDate(d);
+  };
+
+  const rangeLabel=()=>{
+    const d=currentDate;
+    if(view==='day') return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    if(view==='week'){
+      const mon=getMonday(d); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+      return `${mon.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${sun.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`;
+    }
+    return d.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+  };
+
+  const openNew=(defaults={})=>{setSelectedAppt(null);setNewDefaults(defaults);setShowModal(true);};
+  const openEdit=(appt)=>{setSelectedAppt(appt);setNewDefaults(null);setShowModal(true);};
+
+  return(
+    <div>
+      {/* Header */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:10}}>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Schedule</h1>
+        <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+          <select className="input" style={{width:'auto',fontSize:13,padding:'7px 10px'}} value={selectedProvider} onChange={e=>setSelectedProvider(e.target.value)}>
+            <option value="all">All Providers</option>
+            {providers.map(p=><option key={p.id} value={p.id}>{p.full_name}</option>)}
+          </select>
+          <div style={{display:'flex',border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
+            {['day','week','month'].map(v=>(
+              <button key={v} onClick={()=>setView(v)} style={{padding:'7px 14px',fontSize:13,fontWeight:500,
+                background:view===v?'#2563eb':'#fff',color:view===v?'#fff':'#475569',border:'none',cursor:'pointer',textTransform:'capitalize'}}>
+                {v}
+              </button>
+            ))}
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:4}}>
+            <button className="btn btn-outline" style={{padding:'6px 12px'}} onClick={()=>navigate(-1)}>‹</button>
+            <button className="btn btn-outline" style={{padding:'6px 12px',fontSize:13}} onClick={()=>setCurrentDate(new Date())}>Today</button>
+            <button className="btn btn-outline" style={{padding:'6px 12px'}} onClick={()=>navigate(1)}>›</button>
+          </div>
+          <span style={{fontSize:14,fontWeight:600,color:'#1e293b'}}>{rangeLabel()}</span>
+          <button className="btn btn-primary" onClick={()=>openNew()}><Icon name="plus" size={15}/>New Appointment</button>
+          <button className="btn btn-outline" style={{padding:'7px 10px'}} onClick={()=>setShowSettings(s=>!s)} title="Manage appointment types"><Icon name="settings" size={15}/></button>
+        </div>
+      </div>
+
+      {showSettings&&<AppointmentTypeSettings token={token} apptTypes={apptTypes} setApptTypes={setApptTypes} providers={providers}/>}
+
+      {view==='month'&&<MonthView currentDate={currentDate} appointments={appointments} providers={providers} getProviderColor={getProviderColor} onDayClick={d=>{setCurrentDate(d);setView('day');}} onApptClick={openEdit} onNewAppt={openNew}/>}
+      {view==='week'&&<WeekView currentDate={currentDate} appointments={appointments} providers={providers} apptTypes={apptTypes} getProviderColor={getProviderColor} onApptClick={openEdit} onSlotClick={(d,h)=>openNew({date:d,hour:h})}/>}
+      {view==='day'&&<DayView currentDate={currentDate} appointments={appointments} providers={providers} apptTypes={apptTypes} getProviderColor={getProviderColor} onApptClick={openEdit} onSlotClick={(d,h)=>openNew({date:d,hour:h})}/>}
+
+      {showModal&&<AppointmentModal token={token} user={user} appointment={selectedAppt} defaults={newDefaults}
+        providers={providers} apptTypes={apptTypes} patients={patients}
+        onClose={()=>setShowModal(false)}
+        onSave={appt=>{setShowModal(false);toast(selectedAppt?'Appointment updated':'Appointment booked!');loadAppointments();}}
+        onDelete={()=>{setShowModal(false);toast('Appointment cancelled');loadAppointments();}}
+      />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SIDEBAR + MAIN LAYOUT
+// ═══════════════════════════════════════════════════════════════════════════════
+const NAV=[
+  {id:'dashboard',label:'Dashboard',icon:'home'},
+  {id:'patients',label:'Patients',icon:'users'},
+  {id:'notes',label:'Clinical Notes',icon:'clipboard'},
+  {id:'labs',label:'Lab Orders',icon:'lab'},
+  {id:'imaging',label:'Imaging Orders',icon:'xray'},
+  {id:'schedule',label:'Schedule',icon:'calendar'},
+  {id:'fax',label:'Fax Center',icon:'fax'},
+  {id:'memberships',label:'Memberships',icon:'star'},
+  {id:'settings',label:'Settings',icon:'settings'},
+];
+
+function App(){
+  const [token,setToken]=useState(()=>localStorage.getItem('mf_token'));
+  const [user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('mf_user'));}catch{return null;}});
+  const [page,setPage]=useState('dashboard');
+  const [selectedPatient,setSelectedPatient]=useState(null);
+  const [sidebarOpen,setSidebarOpen]=useState(false);
+  const toast=useToast();
+
+  useEffect(()=>{
+    const h=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+    window.addEventListener('auth-expired',h);
+    return()=>window.removeEventListener('auth-expired',h);
+  },[]);
+
+  useEffect(()=>{
+    const navMap={
+      'new-patient':()=>{setPage('patients');setSelectedPatient('new');},
+      'new-note':()=>setPage('notes'),
+      'lab-order':()=>setPage('labs'),
+      'send-fax':()=>setPage('fax'),
+    };
+    const h=e=>{const fn=navMap[e.detail];if(fn)fn();};
+    window.addEventListener('nav',h);
+    return()=>window.removeEventListener('nav',h);
+  },[]);
+
+  const login=(t,u)=>{
+    setToken(t);setUser(u);
+    localStorage.setItem('mf_token',t);
+    localStorage.setItem('mf_user',JSON.stringify(u));
+  };
+  const logout=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+
+  if(!token||!user) return <LoginPage onLogin={login}/>;
+
+  const navigate=(id)=>{setPage(id);setSelectedPatient(null);setSidebarOpen(false);};
+
+  const renderPage=()=>{
+    if(page==='patients'&&selectedPatient==='new') return(
+      <PatientForm token={token} patient={null}
+        onSave={p=>{setSelectedPatient(p);toast('Patient created');}}
+        onCancel={()=>setSelectedPatient(null)}
+      />
+    );
+    if(page==='patients'&&selectedPatient) return(
+      <PatientChart token={token} patient={selectedPatient} user={user}
+        onBack={()=>setSelectedPatient(null)}
+      />
+    );
+    if(page==='patients'&&!selectedPatient) return(
+      <PatientList token={token}
+        onSelect={p=>{setSelectedPatient(p);}}
+        onNew={()=>setSelectedPatient('new')}
+      />
+    );
+    if(page==='dashboard') return <Dashboard token={token}/>;
+    if(page==='notes') return <NotesBrowser token={token} user={user}/>;
+    if(page==='labs') return <LabsBrowser token={token}/>;
+    if(page==='imaging') return <ImagingBrowser token={token}/>;
+    if(page==='schedule') return <ScheduleModule token={token} user={user}/>;
+    if(page==='fax') return <FaxCenter token={token}/>;
+    if(page==='memberships') return <MembershipsBrowser token={token}/>;
+    if(page==='settings') return <Settings token={token} user={user}/>;
+    return <Dashboard token={token}/>;
+  };
+
+  return(
+    <div style={{display:'flex',minHeight:'100vh'}}>
+      {/* Overlay */}
+      {sidebarOpen&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',zIndex:499}} onClick={()=>setSidebarOpen(false)}/>}
+
+      {/* Sidebar */}
+      <div className={`sidebar${sidebarOpen?' open':''}`} style={{width:240,background:'#0f2744',display:'flex',flexDirection:'column',padding:'16px 12px',flexShrink:0,position:'sticky',top:0,height:'100vh',overflowY:'auto'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 4px',marginBottom:24}}>
+          <div style={{width:36,height:36,background:'#2563eb',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            <Icon name="shield" size={20}/>
+          </div>
+          <div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16}}>MedFlow</div>
+            <div style={{color:'#64748b',fontSize:11}}>EMR v1.0</div>
+          </div>
+        </div>
+        {NAV.map(n=>(
+          <div key={n.id} className={`sidebar-item${page===n.id?' active':''}`} onClick={()=>navigate(n.id)}>
+            <Icon name={n.icon} size={16}/>{n.label}
+          </div>
+        ))}
+        <div style={{marginTop:'auto',paddingTop:16,borderTop:'1px solid #1e3a5f'}}>
+          <div style={{padding:'8px 12px',color:'#64748b',fontSize:12}}>
+            <div style={{color:'#94a3b8',fontWeight:500}}>{user.full_name}</div>
+            <div>{user.specialty||user.role}</div>
+          </div>
+          <div className="sidebar-item" onClick={logout}><Icon name="logout" size={16}/>Sign Out</div>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="main-content" style={{flex:1,overflow:'auto'}}>
+        {/* Mobile header */}
+        <div style={{display:'none',background:'#0f2744',padding:'12px 16px',alignItems:'center',gap:12,position:'sticky',top:0,zIndex:10}} id="mobile-header">
+          <button onClick={()=>setSidebarOpen(true)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer',padding:4}}>
+            <Icon name="menu" size={22}/>
+          </button>
+          <span style={{color:'#fff',fontWeight:700}}>MedFlow EMR</span>
+        </div>
+        <style>{`@media(max-width:768px){#mobile-header{display:flex!important;}}`}</style>
+        <div style={{padding:24,maxWidth:1200,margin:'0 auto'}}>
+          {renderPage()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Small browser views (when accessing from nav, not patient chart) ───────────
+function NotesBrowser({token,user}){
+  const [notes,setNotes]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [pdfLoading,setPdfLoading]=useState(null);
+  const toast=useToast();
+
+  useEffect(()=>{setLoading(true);api('GET','/api/notes',null,token).then(d=>{if(d)setNotes(d);setLoading(false);});},[token]);
+
+  const downloadPDF=async(noteId)=>{
+    setPdfLoading(noteId);
+    const blob=await api('GET',`/api/notes/${noteId}/pdf`,null,token).catch(e=>{toast(e.message,'error');return null;});
+    if(blob){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`note_${noteId}.pdf`;a.click();}
+    setPdfLoading(null);
+  };
+
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Clinical Notes</h1>
+      <p style={{color:'#64748b',marginBottom:20,fontSize:14}}>To create a note, open a patient chart and click "New Note".</p>
+      {loading?<Spinner/>:notes.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No notes yet</div>:notes.map(n=>(
+        <div key={n.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+          <div>
+            <div style={{fontWeight:600}}>{n.note_type} — {n.visit_date?.slice(0,10)}</div>
+            <div style={{fontSize:13,color:'#64748b'}}>{n.chief_complaint?.slice(0,80)}</div>
+            <div style={{display:'flex',gap:4,marginTop:4,flexWrap:'wrap'}}>
+              <span className={`badge ${n.status==='signed'?'badge-green':'badge-gray'}`}>{n.status}</span>
+              {n.ai_generated&&<span className="badge badge-yellow">AI</span>}
+            </div>
+          </div>
+          <button className="btn btn-outline" onClick={()=>downloadPDF(n.id)} disabled={pdfLoading===n.id}><Icon name="pdf" size={14}/>{pdfLoading===n.id?'…':'PDF'}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LabsBrowser({token}){
+  const [labs,setLabs]=useState([]);
+  const toast=useToast();
+  useEffect(()=>{api('GET','/api/lab-orders',null,token).then(d=>d&&setLabs(d));},[token]);
+  const transmit=async id=>{const r=await api('POST',`/api/lab-orders/${id}/transmit`,{},token).catch(e=>{toast(e.message,'error');return null;});if(r){toast('Transmitted');setLabs(labs.map(l=>l.id===id?{...l,status:'transmitted'}:l));}};
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Lab Orders</h1>
+      {labs.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No lab orders</div>:labs.map(l=>(
+        <div key={l.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+          <div><div style={{fontWeight:600}}>{JSON.parse(l.tests||'[]').join(', ')}</div>
+            <div style={{fontSize:13,color:'#64748b'}}>{l.facility} · {l.clinical_indication} · {l.created_at?.slice(0,10)}</div>
+            <span className={`badge ${l.priority==='stat'?'badge-red':'badge-gray'}`}>{l.priority}</span>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <span className={`badge ${l.status==='transmitted'?'badge-blue':'badge-yellow'}`}>{l.status}</span>
+            {l.status==='pending'&&<button className="btn btn-primary" onClick={()=>transmit(l.id)} style={{fontSize:13}}><Icon name="send" size={13}/>Send</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ImagingBrowser({token}){
+  const [orders,setOrders]=useState([]);
+  const toast=useToast();
+  useEffect(()=>{api('GET','/api/imaging-orders',null,token).then(d=>d&&setOrders(d));},[token]);
+  const faxOrder=async id=>{const r=await api('POST',`/api/imaging-orders/${id}/fax`,{},token).catch(e=>{toast(e.message,'error');return null;});if(r){toast('Faxed');setOrders(orders.map(o=>o.id===id?{...o,fax_status:'sent'}:o));}};
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Imaging Orders</h1>
+      {orders.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No imaging orders</div>:orders.map(o=>(
+        <div key={o.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+          <div><div style={{fontWeight:600}}>{o.study_type} — {o.body_part}</div>
+            <div style={{fontSize:13,color:'#64748b'}}>{o.facility} · Fax: {o.fax_number} · {o.created_at?.slice(0,10)}</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <span className={`badge ${o.fax_status==='sent'?'badge-green':'badge-yellow'}`}>{o.fax_status}</span>
+            {o.fax_status==='pending'&&<button className="btn btn-primary" onClick={()=>faxOrder(o.id)} style={{fontSize:13}}><Icon name="fax" size={13}/>Fax</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MembershipsBrowser({token}){
+  const [memberships,setMemberships]=useState([]);
+  useEffect(()=>{api('GET','/api/memberships',null,token).then(d=>d&&setMemberships(d));},[token]);
+  const total=memberships.filter(m=>m.status==='active').reduce((s,m)=>s+m.price_monthly,0);
+  return(
+    <div>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Memberships</h1>
+      <div className="card" style={{marginBottom:16,display:'flex',gap:24}}>
+        <div><div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>${total.toFixed(0)}</div><div style={{fontSize:13,color:'#64748b'}}>Monthly Recurring Revenue</div></div>
+        <div><div style={{fontSize:28,fontWeight:800,color:'#2563eb'}}>{memberships.filter(m=>m.status==='active').length}</div><div style={{fontSize:13,color:'#64748b'}}>Active Members</div></div>
+      </div>
+      {memberships.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No memberships</div>:memberships.map(m=>(
+        <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+          <div><div style={{fontWeight:600}}>{m.plan_name} — ${m.price_monthly}/mo</div>
+            <div style={{fontSize:13,color:'#64748b'}}>Started {m.start_date?.slice(0,10)}</div>
+          </div>
+          <span className={`badge ${m.status==='active'?'badge-green':'badge-gray'}`}>{m.status}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+const root=ReactDOM.createRoot(document.getElementById('root'));
+root.render(<ToastProvider><App/></ToastProvider>);
+</script>
+</body>
+</html>

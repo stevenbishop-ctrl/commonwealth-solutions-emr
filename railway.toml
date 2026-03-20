@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+# Railway injects $PORT automatically — uvicorn reads it here
+startCommand = "python -u start.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,0 +1,45 @@
+# Environment — never commit secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+
+# SQLite database (local dev only — Railway uses PostgreSQL)
+*.db
+*.sqlite
+*.sqlite3
+medflow.db
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Uploads / generated files
+uploads/
+backend/uploads/

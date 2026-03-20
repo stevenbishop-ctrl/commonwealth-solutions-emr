@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  emr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data          # persists SQLite DB
+    environment:
+      - DATABASE_URL=sqlite:////app/data/medflow.db
+      - SECRET_KEY=${SECRET_KEY:-CHANGE_ME_USE_OPENSSL_RAND_HEX_32}
+      - TOKEN_EXPIRE_HOURS=8
+      - FAX_NUMBER=${FAX_NUMBER:-+15550000000}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      # Stripe (optional):
+      # - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # allows container to reach host Ollama

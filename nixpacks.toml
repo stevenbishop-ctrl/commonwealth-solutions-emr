@@ -1,0 +1,3 @@
+# Tell Nixpacks where to find requirements.txt (it's in backend/, not root)
+[phases.install]
+cmds = ["pip install -r backend/requirements.txt"]
