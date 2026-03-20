@@ -1332,14 +1332,9 @@ By signing below, you acknowledge that:
                                                 )}
                                                 <div className="plan-name">{plan.name}</div>
                                                 <div className="plan-price">
-                                                    {plan.price === 0 ? 'Contact for Pricing' : `$${plan.price.toFixed(2)}`}
+                                                    {(!plan.price_monthly || plan.price_monthly === 0) ? 'Contact for Pricing' : `$${Number(plan.price_monthly).toFixed(2)}`}
                                                 </div>
-                                                {plan.price === 0 && (
-                                                    <div className="plan-price-note">per month</div>
-                                                )}
-                                                {plan.price > 0 && (
-                                                    <div className="plan-price-note">per month</div>
-                                                )}
+                                                <div className="plan-price-note">per month</div>
                                                 <ul className="plan-features">
                                                     {(plan.features || []).map((feature, idx) => (
                                                         <li key={idx}>{feature}</li>
@@ -1948,7 +1943,7 @@ By signing below, you acknowledge that:
                                 {selectedPlan && (
                                     <div className="info-box">
                                         <strong>{selectedPlan.name}</strong><br/>
-                                        Amount: ${selectedPlan.price === 0 ? 'Contact for Pricing' : selectedPlan.price.toFixed(2)}/month
+                                        Amount: ${(!selectedPlan.price_monthly || selectedPlan.price_monthly === 0) ? 'Contact for Pricing' : Number(selectedPlan.price_monthly).toFixed(2)}/month
                                     </div>
                                 )}
                             </div>
