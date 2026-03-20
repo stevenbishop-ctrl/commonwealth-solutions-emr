@@ -5533,10 +5533,38 @@ def security_alerts(
 # ══════════════════════════════════════════════════════════════════════════════
 
 _REQUIRED_TRAININGS = [
-    {"type": "hipaa_initial",  "name": "HIPAA Privacy & Security Initial Training"},
-    {"type": "hipaa_annual",   "name": "HIPAA Annual Refresher Training"},
-    {"type": "security",       "name": "Security Awareness & Phishing Training"},
-    {"type": "breach",         "name": "Breach Notification Procedures"},
+    {
+        "type": "hipaa_initial",
+        "name": "HIPAA Privacy & Security Initial Training",
+        "provider": "HIPAA Training US",
+        "url": "https://hipaatraining.us/",
+        "description": "Free initial HIPAA training covering Privacy Rule, Security Rule, and Breach Notification. Certificate included at no cost.",
+        "estimated_minutes": 30,
+    },
+    {
+        "type": "hipaa_annual",
+        "name": "HIPAA Annual Refresher Training",
+        "provider": "HIPAA Training US",
+        "url": "https://hipaatraining.us/",
+        "description": "Annual HIPAA refresher — retake the same course each year. Log the new certificate date to reset the compliance clock.",
+        "estimated_minutes": 30,
+    },
+    {
+        "type": "security",
+        "name": "Security Awareness & Phishing Training",
+        "provider": "HIPAA Training US",
+        "url": "https://hipaatraining.us/",
+        "description": "Covers cybersecurity best practices, phishing awareness, and ePHI handling. Included in the HIPAA Training US course.",
+        "estimated_minutes": 30,
+    },
+    {
+        "type": "breach",
+        "name": "Breach Notification Procedures",
+        "provider": "Internal (POL-HIPAA-002)",
+        "url": None,
+        "description": "Review the Incident Response & Breach Notification Plan (POL-HIPAA-002) in the Policies tab. Document attestation in the notes field.",
+        "estimated_minutes": 15,
+    },
 ]
 
 

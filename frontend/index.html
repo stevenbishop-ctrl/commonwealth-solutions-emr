@@ -3631,11 +3631,24 @@ function Settings({token,user}){
 
       {tab==='training'&&user.role==='admin'&&(
         <div>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
             <div>
               <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>Workforce Training Records</h2>
               <p style={{fontSize:13,color:'#64748b',margin:'4px 0 0'}}>POL-HIPAA-001 — Document HIPAA training completion for all staff</p>
             </div>
+          </div>
+
+          {/* Training provider info box */}
+          <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:14}}>
+            <span style={{fontSize:24,flexShrink:0}}>🎓</span>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14,color:'#1e40af'}}>Approved Training Provider: HIPAA Training US</div>
+              <div style={{fontSize:13,color:'#3b82f6',marginTop:2}}>Free course (~30 min) covering Privacy Rule, Security Rule &amp; Breach Notification. Free certificate included.</div>
+            </div>
+            <a href="https://hipaatraining.us/" target="_blank" rel="noopener noreferrer"
+              style={{flexShrink:0,background:'#2563eb',color:'#fff',padding:'8px 16px',borderRadius:6,fontSize:13,fontWeight:600,textDecoration:'none',whiteSpace:'nowrap'}}>
+              Start Training →
+            </a>
           </div>
 
           {!training&&<div style={{textAlign:'center',padding:40}}><span className="spinner"/></div>}
@@ -3674,7 +3687,23 @@ function Settings({token,user}){
                           setAddModal({userId:staff.user_id,userName:staff.full_name});
                         }}>+ Add Record</button>
                       </div>
-                      {missing.length>0&&<div style={{fontSize:12,color:'#dc2626',marginBottom:8}}>Missing: {missing.map(t=>typeOptions.find(x=>x.type===t)?.name||t).join(', ')}</div>}
+                      {missing.length>0&&(
+                        <div style={{fontSize:12,marginBottom:8}}>
+                          <span style={{color:'#dc2626',fontWeight:600}}>Missing: </span>
+                          {missing.map((t,i)=>{
+                            const opt=typeOptions.find(x=>x.type===t);
+                            return(
+                              <span key={t}>
+                                {i>0&&', '}
+                                {opt?.url
+                                  ?<a href={opt.url} target="_blank" rel="noopener noreferrer" style={{color:'#2563eb',textDecoration:'underline'}}>{opt?.name||t}</a>
+                                  :<span style={{color:'#dc2626'}}>{opt?.name||t}</span>
+                                }
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
                       {staff.records.length>0&&(
                         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginTop:6}}>
                           <thead><tr style={{borderBottom:'1px solid #e2e8f0'}}>{['Training','Type','Completed','Notes',''].map(h=><th key={h} style={{padding:'4px 8px',textAlign:'left',color:'#475569'}}>{h}</th>)}</tr></thead>
@@ -3701,9 +3730,15 @@ function Settings({token,user}){
                         <div style={{marginBottom:12}}>
                           <label className="label">Training Type</label>
                           <select className="input" value={addForm.training_type} onChange={e=>selectTrainingType(e.target.value)}>
-                            {typeOptions.map(t=><option key={t.type} value={t.type}>{t.name}</option>)}
+                            {typeOptions.map(t=><option key={t.type} value={t.type}>{t.name} ({t.provider}{t.estimated_minutes?` · ~${t.estimated_minutes} min`:''})</option>)}
                             <option value="custom">Custom / Other</option>
                           </select>
+                          {typeOptions.find(t=>t.type===addForm.training_type)?.url&&(
+                            <a href={typeOptions.find(t=>t.type===addForm.training_type).url} target="_blank" rel="noopener noreferrer"
+                              style={{display:'inline-block',marginTop:6,fontSize:12,color:'#2563eb'}}>
+                              → Open training at {typeOptions.find(t=>t.type===addForm.training_type).provider}
+                            </a>
+                          )}
                         </div>
                         <div style={{marginBottom:12}}>
                           <label className="label">Training Name</label>
