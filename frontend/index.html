@@ -996,11 +996,18 @@ function PatientChart({token,patient,onBack,user}){
           </div>
           {memberships.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No memberships</div>:memberships.map(m=>(
             <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
-              <div><div style={{fontWeight:600}}>{m.plan_name}</div>
+              <div>
+                <div style={{fontWeight:600}}>{m.plan_name}</div>
                 <div style={{fontSize:13,color:'#64748b'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
-                {m.square_card_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Square card ID: {m.square_card_id.slice(0,20)}…</div>}
+                {m.next_billing_date&&<div style={{fontSize:11,color:'#64748b',marginTop:2}}>Next billing: {m.next_billing_date.slice(0,10)}</div>}
+                {m.last_billed_at&&<div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Last charged: {m.last_billed_at.slice(0,10)}</div>}
+                {m.square_card_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Square card: …{m.square_card_id.slice(-6)}</div>}
               </div>
-              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+              <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+                {/* Billing status badge */}
+                {m.billing_status==='past_due'&&<span style={{fontSize:11,background:'#fef3c7',color:'#92400e',borderRadius:4,padding:'2px 7px',fontWeight:600}}>Past Due</span>}
+                {m.billing_status==='suspended'&&<span style={{fontSize:11,background:'#fee2e2',color:'#991b1b',borderRadius:4,padding:'2px 7px',fontWeight:600}}>Suspended</span>}
+                {m.billing_failure_count>0&&<span style={{fontSize:11,color:'#ef4444'}}>⚠ {m.billing_failure_count} failed attempt{m.billing_failure_count>1?'s':''}</span>}
                 {statusBadge(m.status)}
                 {m.square_card_id&&m.status==='active'&&(
                   <button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px'}} onClick={async()=>{
@@ -3574,6 +3581,19 @@ function EnrollmentManager({token}){
     }catch(e){toast(e.message,'error');}
   };
 
+  const [billingRunning,setBillingRunning]=useState(false);
+  const [billingResult,setBillingResult]=useState(null);
+  const runBilling=async()=>{
+    if(!confirm('Run monthly billing now? This will charge all members whose billing date is due.'))return;
+    setBillingRunning(true);setBillingResult(null);
+    try{
+      const d=await api('POST','/api/admin/billing/run',{},token);
+      setBillingResult(d.results);
+      toast(`Billing complete — ${d.results.succeeded} charged, ${d.results.failed} failed, ${d.results.skipped} skipped`);
+    }catch(e){toast('Billing error: '+e.message,'error');}
+    setBillingRunning(false);
+  };
+
   const STATUS_BADGE={
     pending:         {bg:'#fef9c3',color:'#92400e',label:'Pending'},
     payment_pending: {bg:'#dbeafe',color:'#1e40af',label:'Awaiting Payment'},
@@ -3598,11 +3618,18 @@ function EnrollmentManager({token}){
         </div>
       </div>
 
-      <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16}}>
-        {['applications','plans'].map(t=>(
-          <button key={t} className={`tab${tab===t?' active':''}`} onClick={()=>setTab(t)}
-            style={{textTransform:'capitalize'}}>{t==='applications'?'Applications':' Membership Plans'}</button>
-        ))}
+      <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16,alignItems:'flex-end',justifyContent:'space-between'}}>
+        <div style={{display:'flex',gap:0}}>
+          {['applications','plans','billing'].map(t=>(
+            <button key={t} className={`tab${tab===t?' active':''}`} onClick={()=>setTab(t)}
+              style={{textTransform:'capitalize'}}>
+              {t==='applications'?'Applications':t==='plans'?'Membership Plans':'Billing'}
+            </button>
+          ))}
+        </div>
+        <button className="btn btn-primary" style={{marginBottom:4,fontSize:13}} onClick={runBilling} disabled={billingRunning}>
+          {billingRunning?'Running…':'💳 Run Billing Now'}
+        </button>
       </div>
 
       {/* ── Applications tab ── */}
@@ -3736,6 +3763,73 @@ function EnrollmentManager({token}){
           ))}
         </div>
       )}
+
+      {/* ── Billing tab ── */}
+      {tab==='billing'&&(
+        <div>
+          {billingResult&&(
+            <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',gap:24,flexWrap:'wrap'}}>
+              <span style={{fontWeight:600,color:'#15803d'}}>Last run results:</span>
+              <span>✅ Charged: <b>{billingResult.succeeded}</b></span>
+              <span>❌ Failed: <b style={{color:billingResult.failed>0?'#dc2626':'inherit'}}>{billingResult.failed}</b></span>
+              <span>⏭ Skipped: <b>{billingResult.skipped}</b></span>
+            </div>
+          )}
+          <BillingUpcoming token={token}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BillingUpcoming({token}){
+  const toast=useToast();
+  const [rows,setRows]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [days,setDays]=useState(7);
+  useEffect(()=>{
+    setLoading(true);
+    api('GET',`/api/admin/billing/upcoming?days=${days}`,null,token)
+      .then(d=>setRows(d||[]))
+      .catch(()=>toast('Could not load upcoming billing','error'))
+      .finally(()=>setLoading(false));
+  },[days]);
+  return(
+    <div>
+      <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:12}}>
+        <span style={{fontWeight:600,fontSize:15}}>Upcoming Billing</span>
+        <select className="input" style={{width:140}} value={days} onChange={e=>setDays(Number(e.target.value))}>
+          <option value={7}>Next 7 days</option>
+          <option value={14}>Next 14 days</option>
+          <option value={30}>Next 30 days</option>
+        </select>
+      </div>
+      {loading?<div style={{color:'#94a3b8',padding:20}}>Loading…</div>:
+      rows.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:30}}>No billing due in this window</div>:
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}>
+        <thead><tr style={{borderBottom:'2px solid #e2e8f0',textAlign:'left'}}>
+          <th style={{padding:'6px 10px'}}>Patient</th>
+          <th style={{padding:'6px 10px'}}>Plan</th>
+          <th style={{padding:'6px 10px'}}>Amount</th>
+          <th style={{padding:'6px 10px'}}>Due Date</th>
+          <th style={{padding:'6px 10px'}}>Provider</th>
+          <th style={{padding:'6px 10px'}}>Status</th>
+        </tr></thead>
+        <tbody>{rows.map(r=>(
+          <tr key={r.id} style={{borderBottom:'1px solid #f1f5f9'}}>
+            <td style={{padding:'7px 10px'}}>{r.patient_name||'—'}</td>
+            <td style={{padding:'7px 10px'}}>{r.plan_name}</td>
+            <td style={{padding:'7px 10px'}}>${r.price_monthly?.toFixed(2)}/mo</td>
+            <td style={{padding:'7px 10px'}}>{r.next_billing_date?.slice(0,10)}</td>
+            <td style={{padding:'7px 10px',textTransform:'capitalize'}}>{r.payment_provider||'square'}</td>
+            <td style={{padding:'7px 10px'}}>
+              {r.billing_status==='past_due'&&<span style={{color:'#d97706',fontWeight:600}}>Past Due</span>}
+              {r.billing_status==='suspended'&&<span style={{color:'#dc2626',fontWeight:600}}>Suspended</span>}
+              {(!r.billing_status||r.billing_status==='ok')&&<span style={{color:'#16a34a'}}>OK</span>}
+            </td>
+          </tr>
+        ))}</tbody>
+      </table>}
     </div>
   );
 }

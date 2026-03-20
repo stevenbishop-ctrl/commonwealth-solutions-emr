@@ -2117,14 +2117,18 @@ async def create_square_subscription(
     db.add(pay)
 
     # Record the membership with Square IDs
+    _start = datetime.utcnow()
     mem = models.Membership(
         patient_id=data["patient_id"],
         plan_name=plan_name,
         price_monthly=price_monthly,
-        start_date=datetime.utcnow(),
+        start_date=_start,
         status="active",
         square_customer_id=customer_id,
         square_card_id=card_id,
+        payment_provider="square",
+        next_billing_date=_next_anniversary(_start),
+        billing_status="ok",
     )
     db.add(mem)
     db.commit()
@@ -3772,6 +3776,7 @@ def on_startup():
     db = next(get_db())
     try:
         _seed_membership_plans(db)
+        _backfill_billing_dates(db)
     finally:
         db.close()
 
@@ -4085,12 +4090,16 @@ def approve_enrollment(
         models.MembershipPlan.id == enroll.plan_id
     ).first() if enroll.plan_id else None
     if plan:
+        start_now = datetime.utcnow()
         mem = models.Membership(
-            patient_id    = pt.id,
-            plan_name     = plan.name,
-            price_monthly = plan.price_monthly,
-            start_date    = datetime.utcnow(),
-            status        = "active",
+            patient_id        = pt.id,
+            plan_name         = plan.name,
+            price_monthly     = plan.price_monthly,
+            start_date        = start_now,
+            status            = "active",
+            payment_provider  = enroll.payment_method or "square",
+            next_billing_date = _next_anniversary(start_now),
+            billing_status    = "ok",
         )
         db.add(mem)
     # Link consents to new patient
@@ -4195,6 +4204,248 @@ if os.path.isdir(frontend_dir):
             with open(index, "r") as f:
                 return HTMLResponse(content=f.read())
         return HTMLResponse(content="<h1>Frontend not found</h1>", status_code=404)
+
+
+# ── Monthly Billing ───────────────────────────────────────────────────────────
+
+BILLING_RETRY_DAYS = [3, 7]   # retry on day 3 and day 7 after first failure
+
+def _square_charge_card(customer_id: str, card_id: str, amount_cents: int, note: str) -> dict:
+    """Charge a stored Square card-on-file. Returns Square payment object or raises."""
+    import uuid as _uuid_mod
+    headers = {
+        "Authorization":  f"Bearer {SQUARE_ACCESS_TOKEN}",
+        "Content-Type":   "application/json",
+        "Square-Version": "2024-11-20",
+    }
+    payload = {
+        "idempotency_key": str(_uuid_mod.uuid4()),
+        "amount_money":    {"amount": amount_cents, "currency": "USD"},
+        "customer_id":     customer_id,
+        "source_id":       card_id,
+        "note":            note,
+        "location_id":     SQUARE_LOCATION_ID,
+    }
+    r = httpx.post(f"{SQUARE_BASE_URL}/v2/payments", json=payload, headers=headers, timeout=20)
+    body = r.json()
+    if r.status_code != 200 or body.get("payment", {}).get("status") not in ("COMPLETED", "APPROVED"):
+        errors = body.get("errors", [{}])
+        raise RuntimeError(errors[0].get("detail", "Square charge failed"))
+    return body["payment"]
+
+
+def _zaprite_charge(membership: models.Membership, patient: models.Patient, note: str) -> dict:
+    """Create a Zaprite checkout for a membership renewal. Returns checkout URL."""
+    import uuid as _uuid_mod
+    ZAPRITE_API_KEY = os.getenv("ZAPRITE_API_KEY", "")
+    if not ZAPRITE_API_KEY:
+        raise RuntimeError("Zaprite not configured")
+    headers = {
+        "Authorization": f"Bearer {ZAPRITE_API_KEY}",
+        "Content-Type":  "application/json",
+    }
+    payload = {
+        "amount":      int(membership.price_monthly * 100),
+        "currency":    "USD",
+        "description": note,
+        "customer":    {"email": patient.email, "name": f"{patient.first_name} {patient.last_name}"},
+        "metadata":    {"membership_id": str(membership.id), "patient_id": str(patient.id)},
+        "idempotency_key": str(_uuid_mod.uuid4()),
+    }
+    r = httpx.post("https://api.zaprite.com/v1/checkout", json=payload, headers=headers, timeout=20)
+    if r.status_code != 200:
+        raise RuntimeError(f"Zaprite error {r.status_code}: {r.text[:200]}")
+    return r.json()
+
+
+def _notify_billing_failure(patient: models.Patient, membership: models.Membership, attempt: int, error: str):
+    """Log a billing failure. Email notification can be wired here when email is configured."""
+    import logging
+    logging.warning(
+        f"BILLING FAILURE — patient {patient.id} ({patient.email}) "
+        f"membership {membership.id} attempt #{attempt}: {error}"
+    )
+    # TODO: send email via SendGrid/SES when email provider is configured
+
+
+def process_monthly_billing(db: Session):
+    """
+    Run billing for all active memberships whose next_billing_date is today or earlier.
+    - Square members: charge card-on-file directly
+    - Zaprite members: generate checkout link (logged; email delivery when email is configured)
+    - On failure: increment billing_failure_count, set billing_status='past_due'
+    - After 3 failures: set billing_status='suspended', membership status='past_due'
+    - Retries happen automatically on subsequent daily runs (day 3, day 7 after first failure)
+    """
+    import logging
+    now = datetime.utcnow()
+    today = now.date()
+
+    memberships = (
+        db.query(models.Membership)
+        .filter(
+            models.Membership.status.in_(["active", "past_due"]),
+            models.Membership.next_billing_date != None,
+            models.Membership.next_billing_date <= now,
+            models.Membership.billing_status != "suspended",
+        )
+        .all()
+    )
+
+    results = {"attempted": 0, "succeeded": 0, "failed": 0, "skipped": 0}
+
+    for mem in memberships:
+        patient = db.query(models.Patient).filter(models.Patient.id == mem.patient_id).first()
+        if not patient:
+            results["skipped"] += 1
+            continue
+
+        # Skip $0 plans (free / contact-for-pricing)
+        if not mem.price_monthly or mem.price_monthly <= 0:
+            # Advance next_billing_date without charging
+            mem.next_billing_date = _next_anniversary(mem.next_billing_date)
+            db.commit()
+            results["skipped"] += 1
+            continue
+
+        results["attempted"] += 1
+        amount_cents = int(round(mem.price_monthly * 100))
+        note = f"Valiant DPC — {mem.plan_name} membership ({today.strftime('%B %Y')})"
+        provider = mem.payment_provider or "square"
+
+        try:
+            if provider == "square":
+                if not (mem.square_customer_id and mem.square_card_id):
+                    raise RuntimeError("No Square card on file")
+                sq_pay = _square_charge_card(
+                    mem.square_customer_id, mem.square_card_id, amount_cents, note
+                )
+                pay = models.Payment(
+                    patient_id=mem.patient_id,
+                    amount=mem.price_monthly,
+                    description=note,
+                    payment_method="square_card",
+                    status="completed",
+                    payment_ref_id=sq_pay["id"],
+                )
+            else:  # zaprite
+                checkout = _zaprite_charge(mem, patient, note)
+                pay = models.Payment(
+                    patient_id=mem.patient_id,
+                    amount=mem.price_monthly,
+                    description=note,
+                    payment_method="zaprite",
+                    status="pending",
+                    payment_ref_id=checkout.get("id", ""),
+                )
+                # Log the checkout URL so staff can follow up if needed
+                logging.info(
+                    f"Zaprite checkout for membership {mem.id}: {checkout.get('url', '')}"
+                )
+
+            db.add(pay)
+
+            # Success — reset failure count, advance next billing date
+            mem.last_billed_at        = now
+            mem.billing_failure_count = 0
+            mem.billing_status        = "ok"
+            mem.status                = "active"
+            mem.next_billing_date     = _next_anniversary(mem.next_billing_date)
+            db.commit()
+            audit(db, 0, "BILLING_SUCCESS", "Membership", str(mem.id))
+            results["succeeded"] += 1
+
+        except Exception as exc:
+            db.rollback()
+            mem.billing_failure_count = (mem.billing_failure_count or 0) + 1
+            attempt = mem.billing_failure_count
+
+            _notify_billing_failure(patient, mem, attempt, str(exc))
+
+            if attempt >= 3:
+                mem.billing_status = "suspended"
+                mem.status         = "past_due"
+                logging.warning(f"Membership {mem.id} suspended after {attempt} failures")
+            else:
+                mem.billing_status    = "past_due"
+                # Schedule next retry
+                retry_days = BILLING_RETRY_DAYS[min(attempt - 1, len(BILLING_RETRY_DAYS) - 1)]
+                mem.next_billing_date = now + timedelta(days=retry_days)
+
+            db.commit()
+            audit(db, 0, "BILLING_FAILURE", "Membership", str(mem.id))
+            results["failed"] += 1
+
+    return results
+
+
+def _next_anniversary(current: datetime) -> datetime:
+    """Advance a billing date by exactly one month, preserving the day-of-month."""
+    import calendar
+    month = current.month + 1
+    year  = current.year
+    if month > 12:
+        month = 1
+        year += 1
+    # Clamp to last valid day of the target month (e.g. Jan 31 → Feb 28)
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(current.day, last_day)
+    return current.replace(year=year, month=month, day=day)
+
+
+@app.post("/api/admin/billing/run")
+def run_billing_now(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Manually trigger the monthly billing run. Admin only."""
+    if current_user.role not in ("admin", "provider"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    results = process_monthly_billing(db)
+    return {"status": "ok", "results": results}
+
+
+@app.get("/api/admin/billing/upcoming")
+def billing_upcoming(
+    days: int = 7,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Return memberships with billing due in the next N days."""
+    cutoff = datetime.utcnow() + timedelta(days=days)
+    mems = (
+        db.query(models.Membership)
+        .filter(
+            models.Membership.status.in_(["active", "past_due"]),
+            models.Membership.next_billing_date != None,
+            models.Membership.next_billing_date <= cutoff,
+        )
+        .order_by(models.Membership.next_billing_date)
+        .all()
+    )
+    rows = []
+    for m in mems:
+        d = clean(m)
+        pt = db.query(models.Patient).filter(models.Patient.id == m.patient_id).first()
+        if pt:
+            d["patient_name"] = f"{pt.first_name} {pt.last_name}"
+            d["patient_email"] = pt.email
+        rows.append(d)
+    return rows
+
+
+# Wire billing into the startup event so next_billing_date is set for
+# any approved membership that doesn't have one yet (e.g. legacy rows).
+def _backfill_billing_dates(db: Session):
+    mems = db.query(models.Membership).filter(
+        models.Membership.status == "active",
+        models.Membership.next_billing_date == None,
+    ).all()
+    for m in mems:
+        anchor = m.last_billed_at or m.start_date or datetime.utcnow()
+        m.next_billing_date = _next_anniversary(anchor)
+    if mems:
+        db.commit()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

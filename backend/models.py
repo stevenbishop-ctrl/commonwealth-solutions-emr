@@ -134,6 +134,12 @@ class Membership(Base):
     status = Column(String, default="active")   # active, cancelled, expired
     square_customer_id = Column(String, default="", name="stripe_customer_id")
     square_card_id = Column(String, default="", name="stripe_subscription_id")
+    # Billing cycle tracking
+    next_billing_date  = Column(DateTime, nullable=True)   # next scheduled charge
+    last_billed_at     = Column(DateTime, nullable=True)   # last successful charge
+    billing_failure_count = Column(Integer, default=0)     # consecutive failures
+    billing_status     = Column(String, default="ok")      # ok, past_due, suspended
+    payment_provider   = Column(String, default="square")  # square or zaprite
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
