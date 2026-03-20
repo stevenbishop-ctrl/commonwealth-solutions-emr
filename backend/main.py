@@ -1817,10 +1817,7 @@ def create_membership(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """
-    PLACEHOLDER — Create Stripe Customer + Subscription here.
-    stripe.Subscription.create(customer=cus_id, items=[{"price": price_id}])
-    """
+    """Create a membership record for a patient."""
     start = data.get("start_date")
     m = models.Membership(
         patient_id=data["patient_id"],
@@ -1876,10 +1873,7 @@ def create_payment(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """
-    PLACEHOLDER — Create Stripe PaymentIntent here.
-    intent = stripe.PaymentIntent.create(amount=cents, currency="usd")
-    """
+    """Record a payment for a patient."""
     pay = models.Payment(
         patient_id=data["patient_id"],
         amount=data.get("amount", 0.0),
@@ -2005,7 +1999,7 @@ async def create_square_payment(
         description=data.get("description", ""),
         payment_method="square",
         status="completed" if sq_payment["status"] == "COMPLETED" else "pending",
-        stripe_payment_intent_id=sq_payment["id"],   # field reused for Square payment ID
+        payment_ref_id=sq_payment["id"],
     )
     db.add(pay)
     db.commit()
@@ -2056,12 +2050,12 @@ async def create_square_subscription(
         # 1. Re-use existing Square customer for this patient if available
         existing = db.query(models.Membership).filter(
             models.Membership.patient_id == data["patient_id"],
-            models.Membership.stripe_customer_id != None,
-            models.Membership.stripe_customer_id != "",
+            models.Membership.square_customer_id != None,
+            models.Membership.square_customer_id != "",
         ).first()
 
-        if existing and existing.stripe_customer_id:
-            customer_id = existing.stripe_customer_id
+        if existing and existing.square_customer_id:
+            customer_id = existing.square_customer_id
         else:
             cr = await client.post(
                 f"{SQUARE_BASE_URL}/v2/customers",
@@ -2118,19 +2112,19 @@ async def create_square_subscription(
         description=f"Membership: {plan_name} — first month",
         payment_method="square",
         status="completed",
-        stripe_payment_intent_id=sq_payment_id,
+        payment_ref_id=sq_payment_id,
     )
     db.add(pay)
 
-    # Record the membership (stripe_customer_id / stripe_subscription_id reused for Square IDs)
+    # Record the membership with Square IDs
     mem = models.Membership(
         patient_id=data["patient_id"],
         plan_name=plan_name,
         price_monthly=price_monthly,
         start_date=datetime.utcnow(),
         status="active",
-        stripe_customer_id=customer_id,   # Square customer ID
-        stripe_subscription_id=card_id,   # Square card-on-file ID (for future charges)
+        square_customer_id=customer_id,
+        square_card_id=card_id,
     )
     db.add(mem)
     db.commit()
@@ -2152,7 +2146,7 @@ async def cancel_square_subscription(
         raise HTTPException(status_code=404, detail="Membership not found")
 
     # Disable the card on file so future charges are blocked
-    card_id = mem.stripe_subscription_id
+    card_id = mem.square_card_id
     if card_id and SQUARE_ACCESS_TOKEN:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -2207,7 +2201,7 @@ async def square_webhook(request: Request, db: Session = Depends(get_db)):
         sq_pay_id = obj.get("payment", {}).get("id", "")
         if sq_pay_id:
             pay = db.query(models.Payment).filter(
-                models.Payment.stripe_payment_intent_id == sq_pay_id
+                models.Payment.payment_ref_id == sq_pay_id
             ).first()
             if pay:
                 pay.status = "completed"
@@ -2480,7 +2474,7 @@ async def create_zaprite_order(
         description=description,
         payment_method="crypto",
         status="pending",
-        stripe_payment_intent_id=order_id,  # field reused for Zaprite order ID
+        payment_ref_id=order_id,
     )
     db.add(pay)
     db.commit()
@@ -2520,7 +2514,7 @@ async def get_zaprite_order_status(
 
     if status in ("PAID", "OVERPAID", "COMPLETE"):
         pay = db.query(models.Payment).filter(
-            models.Payment.stripe_payment_intent_id == order_id
+            models.Payment.payment_ref_id == order_id
         ).first()
         if pay and pay.status != "completed":
             pay.status = "completed"
@@ -2553,7 +2547,7 @@ async def zaprite_webhook(request: Request, db: Session = Depends(get_db)):
 
     if event_type == "order.change" and order_id:
         pay = db.query(models.Payment).filter(
-            models.Payment.stripe_payment_intent_id == order_id
+            models.Payment.payment_ref_id == order_id
         ).first()
         if pay:
             if status in ("PAID", "OVERPAID", "COMPLETE"):

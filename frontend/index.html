@@ -998,11 +998,11 @@ function PatientChart({token,patient,onBack,user}){
             <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
               <div><div style={{fontWeight:600}}>{m.plan_name}</div>
                 <div style={{fontSize:13,color:'#64748b'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
-                {m.stripe_subscription_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Square card ID: {m.stripe_subscription_id.slice(0,20)}…</div>}
+                {m.square_card_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>Square card ID: {m.square_card_id.slice(0,20)}…</div>}
               </div>
               <div style={{display:'flex',gap:8,alignItems:'center'}}>
                 {statusBadge(m.status)}
-                {m.stripe_subscription_id&&m.status==='active'&&(
+                {m.square_card_id&&m.status==='active'&&(
                   <button className="btn btn-danger" style={{fontSize:12,padding:'4px 10px'}} onClick={async()=>{
                     if(!window.confirm('Cancel this Square subscription?')) return;
                     const r=await api('DELETE',`/api/square/subscription/${m.id}`,null,token).catch(e=>{toast(e.message,'error');return null;});

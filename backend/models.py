@@ -132,8 +132,8 @@ class Membership(Base):
     start_date = Column(DateTime)
     end_date = Column(DateTime, nullable=True)
     status = Column(String, default="active")   # active, cancelled, expired
-    stripe_customer_id = Column(String, default="")
-    stripe_subscription_id = Column(String, default="")
+    square_customer_id = Column(String, default="", name="stripe_customer_id")
+    square_card_id = Column(String, default="", name="stripe_subscription_id")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -145,7 +145,7 @@ class Payment(Base):
     description = Column(String, default="")
     payment_method = Column(String, default="card")
     status = Column(String, default="pending")  # pending, completed, failed, refunded
-    stripe_payment_intent_id = Column(String, default="")
+    payment_ref_id = Column(String, default="", name="stripe_payment_intent_id")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -159,8 +159,8 @@ class CryptoPayment(Base):
     address = Column(String, default="")         # receiving wallet address
     reference = Column(String, default="")       # unique 6-char ref code (Solana memo)
     crypto_amount = Column(Float, nullable=True) # amount in crypto (BTC only)
-    btcpay_invoice_id = Column(String, default="")
-    btcpay_invoice_url = Column(String, default="")
+    zaprite_order_id = Column(String, default="")
+    zaprite_checkout_url = Column(String, default="")
     tx_signature = Column(String, default="")    # Solana tx signature or BTC txid
     status = Column(String, default="pending")   # pending, confirmed, expired, failed
     description = Column(String, default="")
