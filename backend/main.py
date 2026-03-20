@@ -46,6 +46,7 @@ SQUARE_ACCESS_TOKEN = os.getenv("SQUARE_ACCESS_TOKEN", "")
 SQUARE_LOCATION_ID  = os.getenv("SQUARE_LOCATION_ID", "")
 SQUARE_APP_ID       = os.getenv("SQUARE_APP_ID", "")
 SQUARE_ENVIRONMENT  = os.getenv("SQUARE_ENVIRONMENT", "production")
+BILLING_SECRET      = os.getenv("BILLING_SECRET", "")   # secret key for scheduled billing cron
 SQUARE_BASE_URL = (
     "https://connect.squareupsandbox.com"
     if SQUARE_ENVIRONMENT == "sandbox"
@@ -4402,6 +4403,24 @@ def run_billing_now(
     if current_user.role not in ("admin", "provider"):
         raise HTTPException(status_code=403, detail="Admin access required")
     results = process_monthly_billing(db)
+    return {"status": "ok", "results": results}
+
+
+@app.post("/api/cron/billing")
+def cron_billing(request: Request, db: Session = Depends(get_db)):
+    """
+    Scheduled billing endpoint — authenticated by BILLING_SECRET header.
+    Called daily by an external cron job (no JWT required).
+    Set BILLING_SECRET env var and pass it as X-Billing-Secret header.
+    """
+    if not BILLING_SECRET:
+        raise HTTPException(status_code=503, detail="Billing cron not configured — set BILLING_SECRET env var")
+    secret = request.headers.get("X-Billing-Secret", "")
+    if not secret or secret != BILLING_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid billing secret")
+    results = process_monthly_billing(db)
+    import logging
+    logging.info(f"Cron billing complete: {results}")
     return {"status": "ok", "results": results}
 
 
