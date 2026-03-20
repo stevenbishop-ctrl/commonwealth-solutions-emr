@@ -5440,8 +5440,7 @@ def security_alerts(
         )
         .all()
     )
-    from collections import defaultdict
-    user_patients: dict = defaultdict(set)
+    user_patients: dict = collections.defaultdict(set)
     for row in recent_views:
         user_patients[row.user_id].add(row.resource_id)
     for uid, patient_ids in user_patients.items():
@@ -5465,7 +5464,7 @@ def security_alerts(
         )
         .all()
     )
-    ip_failures: dict = defaultdict(int)
+    ip_failures: dict = collections.defaultdict(int)
     for row in failed_logins:
         ip_failures[row.ip_address or "unknown"] += 1
     for ip, count in ip_failures.items():
@@ -5551,7 +5550,7 @@ def list_training_records(
     users = db.query(models.User).filter(models.User.is_active == True).all()
     records = db.query(models.TrainingRecord).all()
     # Build a lookup: user_id → list of training records
-    by_user: dict = defaultdict(list)
+    by_user: dict = collections.defaultdict(list)
     for r in records:
         by_user[r.user_id].append({
             "id": r.id,
