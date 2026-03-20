@@ -1588,7 +1588,9 @@ def create_imaging_order(
         facility=data.get("facility", ""),
         fax_number=data.get("fax_number", ""),
         icd10_codes=json.dumps(data.get("icd10_codes", [])),
+        cpt_code=data.get("cpt_code", ""),
         notes=data.get("notes", ""),
+        status="ordered",
         fax_status="pending",
     )
     db.add(order)
@@ -1598,24 +1600,251 @@ def create_imaging_order(
     return clean(order)
 
 
+@app.put("/api/imaging-orders/{order_id}")
+def update_imaging_order(
+    order_id: int,
+    data: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Update status, scheduling date, results, notes, etc."""
+    order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    now = datetime.utcnow()
+    for field in ["study_type","body_part","clinical_indication","priority",
+                  "facility","fax_number","cpt_code","notes","result_notes"]:
+        if field in data:
+            setattr(order, field, data[field])
+    if "icd10_codes" in data:
+        order.icd10_codes = json.dumps(data["icd10_codes"])
+    if "status" in data:
+        new_status = data["status"]
+        order.status = new_status
+        if new_status == "scheduled" and not order.scheduled_at:
+            order.scheduled_at = datetime.fromisoformat(data["scheduled_at"]) if data.get("scheduled_at") else now
+        if new_status == "completed" and not order.completed_at:
+            order.completed_at = now
+        if new_status == "results_received" and not order.results_received_at:
+            order.results_received_at = now
+    db.commit()
+    audit(db, current_user.id, "UPDATE_IMAGING_ORDER", "ImagingOrder", str(order_id))
+    return clean(order)
+
+
+def _build_imaging_order_pdf(order: models.ImagingOrder, patient: models.Patient, physician: models.User) -> bytes:
+    """Generate a structured imaging order PDF using reportlab."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    from reportlab.lib import colors
+    import io
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter,
+                            leftMargin=0.75*inch, rightMargin=0.75*inch,
+                            topMargin=0.75*inch, bottomMargin=0.75*inch)
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Header
+    story.append(Paragraph("<b>VALIANT DIRECT PRIMARY CARE</b>", ParagraphStyle("h",fontSize=16,spaceAfter=2,alignment=1)))
+    story.append(Paragraph("Direct Primary Care Practice • Virginia", ParagraphStyle("sub",fontSize=10,spaceAfter=4,alignment=1,textColor=colors.grey)))
+    story.append(HRFlowable(width="100%", thickness=2, color=colors.HexColor("#1e3a5f")))
+    story.append(Spacer(1, 10))
+
+    priority_color = {"STAT": colors.red, "urgent": colors.orange, "routine": colors.black}.get(order.priority, colors.black)
+    story.append(Paragraph(f"<b>IMAGING ORDER</b> — <font color='{'red' if order.priority=='STAT' else 'black'}'>{order.priority.upper()}</font>",
+                            ParagraphStyle("title",fontSize=14,spaceAfter=8)))
+    story.append(Paragraph(f"Order Date: {order.created_at.strftime('%B %d, %Y') if order.created_at else ''}  |  Order #: IMG-{order.id:04d}",
+                            ParagraphStyle("meta",fontSize=10,spaceAfter=12,textColor=colors.grey)))
+
+    # Patient info
+    story.append(Paragraph("<b>PATIENT INFORMATION</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
+    pt_dob = patient.date_of_birth.strftime('%m/%d/%Y') if patient.date_of_birth else ""
+    pt_data = [
+        ["Name:", f"{patient.first_name} {patient.last_name}", "DOB:", pt_dob],
+        ["Phone:", getattr(patient,"phone",""), "MRN:", f"PT-{patient.id:05d}"],
+    ]
+    pt_table = Table(pt_data, colWidths=[1.1*inch, 2.5*inch, 1.1*inch, 2.0*inch])
+    pt_table.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 10),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+    ]))
+    story.append(pt_table)
+    story.append(Spacer(1, 10))
+
+    # Order details
+    story.append(Paragraph("<b>ORDER DETAILS</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
+    details = [
+        ["Study Type:", f"{order.study_type}{' — ' + order.body_part if order.body_part else ''}"],
+        ["CPT Code:", order.cpt_code or "—"],
+        ["Facility:", order.facility or "—"],
+        ["Priority:", order.priority.upper()],
+    ]
+    try:
+        icd_list = json.loads(order.icd10_codes or "[]")
+        details.append(["ICD-10:", ", ".join(icd_list) if icd_list else "—"])
+    except Exception:
+        pass
+    det_table = Table(details, colWidths=[1.5*inch, 5.2*inch])
+    det_table.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 10),
+        ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#f8fafc")),
+        ("ROWBACKGROUNDS", (0,0), (-1,-1), [colors.HexColor("#f8fafc"), colors.white]),
+    ]))
+    story.append(det_table)
+    story.append(Spacer(1, 10))
+
+    # Clinical indication
+    if order.clinical_indication:
+        story.append(Paragraph("<b>CLINICAL INDICATION / REASON FOR EXAM</b>",
+                               ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
+        story.append(Paragraph(order.clinical_indication, ParagraphStyle("body",fontSize=10,spaceAfter=8)))
+
+    # Notes
+    if order.notes:
+        story.append(Paragraph("<b>SPECIAL INSTRUCTIONS</b>",
+                               ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
+        story.append(Paragraph(order.notes, ParagraphStyle("body",fontSize=10,spaceAfter=8)))
+
+    # Ordering physician
+    story.append(HRFlowable(width="100%", thickness=1, color=colors.lightgrey))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph("<b>ORDERING PROVIDER</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
+    doc_name = f"Dr. {physician.full_name}" if hasattr(physician,"full_name") and physician.full_name else physician.username
+    story.append(Paragraph(f"{doc_name}  |  Valiant Direct Primary Care",
+                           ParagraphStyle("body",fontSize=10,spaceAfter=2)))
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("_" * 45 + "     " + "_" * 20,
+                           ParagraphStyle("sig",fontSize=10)))
+    story.append(Paragraph("Physician Signature                                           Date",
+                           ParagraphStyle("siglabel",fontSize=9,textColor=colors.grey)))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 @app.post("/api/imaging-orders/{order_id}/fax")
-def fax_imaging_order(
+async def fax_imaging_order(
     order_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """
-    PLACEHOLDER — In production integrate with Twilio Fax / SRFax / eFax API.
-    Generate a PDF of the order, then POST to the fax API.
-    """
+    """Generate imaging order PDF and send via Telnyx fax."""
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    order.fax_status = "sent"
+    if not order.fax_number:
+        raise HTTPException(status_code=400, detail="No fax number set for this order")
+
+    patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    physician = db.query(models.User).filter(models.User.id == order.physician_id).first() or current_user
+
+    # Generate PDF
+    pdf_bytes = _build_imaging_order_pdf(order, patient, physician)
+
+    subject = f"Imaging Order — {order.study_type} — {patient.first_name} {patient.last_name}"
+
+    if _telnyx_configured():
+        fax_to = re.sub(r"[^\d+]", "", order.fax_number)
+        if not fax_to.startswith("+"):
+            fax_to = "+1" + fax_to.lstrip("1")
+        fax_id, fax_status = await _send_telnyx_fax(fax_to, pdf_bytes, subject)
+        order.telnyx_fax_id = fax_id
+        order.fax_status = fax_status
+    else:
+        order.fax_status = "queued"
+
     order.fax_sent_at = datetime.utcnow()
+    order.status = "faxed"
+    db.commit()
+
+    # Log to FaxLog
+    log = models.FaxLog(
+        patient_id=order.patient_id,
+        physician_id=current_user.id,
+        direction="sent",
+        to_number=order.fax_number,
+        subject=subject,
+        pages=1,
+        status=order.fax_status,
+        telnyx_fax_id=order.telnyx_fax_id or "",
+    )
+    db.add(log)
     db.commit()
     audit(db, current_user.id, "FAX_IMAGING_ORDER", "ImagingOrder", str(order_id))
-    return {"success": True, "message": f"Imaging order faxed to {order.fax_number} [placeholder]"}
+    return clean(order)
+
+
+@app.get("/api/imaging-orders/{order_id}/fax-status")
+async def imaging_fax_status(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Poll Telnyx for updated fax status."""
+    order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.telnyx_fax_id and _telnyx_configured():
+        headers = {"Authorization": f"Bearer {TELNYX_API_KEY}"}
+        r = httpx.get(f"https://api.telnyx.com/v2/faxes/{order.telnyx_fax_id}", headers=headers, timeout=10)
+        if r.status_code == 200:
+            telnyx_status = r.json().get("data", {}).get("status", order.fax_status)
+            order.fax_status = telnyx_status
+            if telnyx_status == "delivered" and order.status == "faxed":
+                order.status = "faxed"  # keep as faxed until scheduled
+            db.commit()
+    return clean(order)
+
+
+@app.post("/api/imaging-orders/{order_id}/results")
+async def upload_imaging_results(
+    order_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Accept either a JSON body with result_notes, or a multipart PDF upload.
+    Updates status to results_received.
+    """
+    content_type = request.headers.get("content-type", "")
+    order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if "multipart" in content_type:
+        form = await request.form()
+        result_file = form.get("result_file")
+        if result_file:
+            import os as _os
+            upload_dir = "/tmp/imaging_results"
+            _os.makedirs(upload_dir, exist_ok=True)
+            filename = f"IMG-{order_id:04d}-result-{int(datetime.utcnow().timestamp())}.pdf"
+            file_path = f"{upload_dir}/{filename}"
+            contents = await result_file.read()
+            with open(file_path, "wb") as f:
+                f.write(contents)
+            order.result_file_path = file_path
+        order.result_notes = form.get("result_notes", order.result_notes or "")
+    else:
+        body = await request.json()
+        order.result_notes = body.get("result_notes", order.result_notes or "")
+
+    order.status = "results_received"
+    order.results_received_at = datetime.utcnow()
+    if not order.completed_at:
+        order.completed_at = datetime.utcnow()
+    db.commit()
+    audit(db, current_user.id, "IMAGING_RESULTS_RECEIVED", "ImagingOrder", str(order_id))
+    return clean(order)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -3787,6 +4016,15 @@ def _migrate_add_billing_columns(db: Session):
         "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS payment_provider VARCHAR DEFAULT 'square'",
         "ALTER TABLE crypto_payments ADD COLUMN IF NOT EXISTS zaprite_order_id VARCHAR DEFAULT ''",
         "ALTER TABLE crypto_payments ADD COLUMN IF NOT EXISTS zaprite_checkout_url VARCHAR DEFAULT ''",
+        # Imaging order enhancements
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'ordered'",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS telnyx_fax_id VARCHAR",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS cpt_code VARCHAR DEFAULT ''",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS results_received_at TIMESTAMP",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_notes TEXT DEFAULT ''",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_path VARCHAR DEFAULT ''",
     ]
     from sqlalchemy import text
     for sql in migrations:

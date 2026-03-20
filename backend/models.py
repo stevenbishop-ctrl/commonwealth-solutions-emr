@@ -101,9 +101,17 @@ class ImagingOrder(Base):
     fax_number = Column(String, default="")
     icd10_codes = Column(Text, default="[]")
     notes = Column(Text, default="")
-    fax_status = Column(String, default="pending")  # pending, sent, failed
+    status      = Column(String, default="ordered")   # ordered, faxed, scheduled, completed, results_received, cancelled
+    fax_status  = Column(String, default="pending")   # pending, queued, sending, delivered, failed
     fax_sent_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    telnyx_fax_id = Column(String, nullable=True)
+    cpt_code    = Column(String, default="")
+    scheduled_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    results_received_at = Column(DateTime, nullable=True)
+    result_notes = Column(Text, default="")           # radiologist report / impression
+    result_file_path = Column(String, default="")     # uploaded PDF path
+    created_at  = Column(DateTime, default=datetime.utcnow)
 
 
 class FaxLog(Base):

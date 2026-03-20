@@ -948,19 +948,7 @@ function PatientChart({token,patient,onBack,user}){
             <button className="btn btn-primary" onClick={()=>setShowImagingForm(true)}><Icon name="plus" size={15}/>New Imaging Order</button>
           </div>
           {imaging.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No imaging orders</div>:imaging.map(o=>(
-            <div key={o.id} className="card" style={{marginBottom:10}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
-                <div>
-                  <div style={{fontWeight:600}}>{o.study_type} — {o.body_part}</div>
-                  <div style={{fontSize:13,color:'#64748b'}}>{o.facility} · Fax: {o.fax_number} · {o.created_at?.slice(0,10)}</div>
-                  <div style={{fontSize:13,color:'#64748b'}}>{o.clinical_indication}</div>
-                </div>
-                <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                  {statusBadge(o.fax_status)}
-                  {o.fax_status==='pending'&&<button className="btn btn-primary" onClick={()=>faxImaging(o.id)}><Icon name="fax" size={14}/>Fax Order</button>}
-                </div>
-              </div>
-            </div>
+            <ImagingOrderCard key={o.id} order={o} token={token} onUpdate={updated=>setImaging(imaging.map(x=>x.id===updated.id?updated:x))}/>
           ))}
           {showImagingForm&&<ImagingOrderForm token={token} patient={patient} onSave={o=>{setImaging([o,...imaging]);setShowImagingForm(false);}} onCancel={()=>setShowImagingForm(false)}/>}
         </div>
@@ -1301,9 +1289,130 @@ function LabOrderForm({token,patient,onSave,onCancel}){
   );
 }
 
+const IMAGING_STATUS={
+  ordered:          {color:'#64748b', bg:'#f1f5f9', label:'Ordered'},
+  faxed:            {color:'#2563eb', bg:'#eff6ff', label:'Faxed'},
+  scheduled:        {color:'#7c3aed', bg:'#f5f3ff', label:'Scheduled'},
+  completed:        {color:'#0891b2', bg:'#ecfeff', label:'Completed'},
+  results_received: {color:'#16a34a', bg:'#f0fdf4', label:'Results In'},
+  cancelled:        {color:'#dc2626', bg:'#fef2f2', label:'Cancelled'},
+};
+
+const FAX_STATUS_ICON={'pending':'⏳','queued':'📤','sending':'📤','delivered':'✅','failed':'❌'};
+
+function ImagingOrderCard({order:initial, token, onUpdate}){
+  const toast=useToast();
+  const [order,setOrder]=useState(initial);
+  const [showResults,setShowResults]=useState(false);
+  const [resultNotes,setResultNotes]=useState('');
+  const [resultFile,setResultFile]=useState(null);
+  const [saving,setSaving]=useState(false);
+
+  const update=async(patch)=>{
+    const d=await api('PUT',`/api/imaging-orders/${order.id}`,patch,token).catch(e=>{toast(e.message,'error');return null;});
+    if(d){setOrder(d);onUpdate(d);}
+  };
+
+  const faxOrder=async()=>{
+    setSaving(true);
+    const d=await api('POST',`/api/imaging-orders/${order.id}/fax`,{},token).catch(e=>{toast(e.message,'error');return null;});
+    if(d){setOrder(d);onUpdate(d);toast('📠 Imaging order faxed to radiology');}
+    setSaving(false);
+  };
+
+  const refreshFax=async()=>{
+    const d=await api('GET',`/api/imaging-orders/${order.id}/fax-status`,null,token).catch(()=>null);
+    if(d){setOrder(d);onUpdate(d);}
+  };
+
+  const submitResults=async()=>{
+    setSaving(true);
+    try{
+      if(resultFile){
+        const fd=new FormData();
+        fd.append('result_file',resultFile);
+        fd.append('result_notes',resultNotes);
+        const r=await fetch(`/api/imaging-orders/${order.id}/results`,{method:'POST',headers:{'Authorization':`Bearer ${token}`},body:fd});
+        if(!r.ok)throw new Error(await r.text());
+        const d=await r.json();setOrder(d);onUpdate(d);
+      } else {
+        const d=await api('POST',`/api/imaging-orders/${order.id}/results`,{result_notes:resultNotes},token);
+        if(d){setOrder(d);onUpdate(d);}
+      }
+      toast('✅ Results saved');setShowResults(false);
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const st=IMAGING_STATUS[order.status]||IMAGING_STATUS.ordered;
+  const priority_color=order.priority==='STAT'?'#dc2626':order.priority==='urgent'?'#d97706':'#64748b';
+
+  return(
+    <div className="card" style={{marginBottom:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
+        <div style={{flex:1}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+            <span style={{fontWeight:700,fontSize:15}}>🩻 {order.study_type}{order.body_part?' — '+order.body_part:''}</span>
+            <span style={{fontSize:12,fontWeight:600,color:priority_color,background:order.priority==='STAT'?'#fee2e2':order.priority==='urgent'?'#fef3c7':'#f1f5f9',borderRadius:4,padding:'1px 6px'}}>{order.priority?.toUpperCase()}</span>
+            <span style={{fontSize:12,fontWeight:600,color:st.color,background:st.bg,borderRadius:4,padding:'1px 6px'}}>{st.label}</span>
+          </div>
+          <div style={{fontSize:13,color:'#64748b',marginBottom:2}}>
+            {order.facility&&<span>🏥 {order.facility}</span>}
+            {order.fax_number&&<span style={{marginLeft:8}}>📠 {order.fax_number}</span>}
+            {order.cpt_code&&<span style={{marginLeft:8}}>CPT: {order.cpt_code}</span>}
+            <span style={{marginLeft:8}}>📅 {order.created_at?.slice(0,10)}</span>
+          </div>
+          {order.clinical_indication&&<div style={{fontSize:13,color:'#475569',marginBottom:2}}>Indication: {order.clinical_indication}</div>}
+          {order.fax_status&&order.fax_status!=='pending'&&(
+            <div style={{fontSize:12,color:'#94a3b8',marginTop:2,cursor:'pointer'}} onClick={refreshFax}>
+              Fax: {FAX_STATUS_ICON[order.fax_status]||''} {order.fax_status} {order.fax_sent_at&&'· '+order.fax_sent_at.slice(0,10)} <span style={{color:'#93c5fd',fontSize:11}}>(refresh)</span>
+            </div>
+          )}
+          {order.scheduled_at&&<div style={{fontSize:12,color:'#7c3aed',marginTop:2}}>📅 Scheduled: {order.scheduled_at.slice(0,10)}</div>}
+          {order.results_received_at&&<div style={{fontSize:12,color:'#16a34a',marginTop:2}}>✅ Results received: {order.results_received_at.slice(0,10)}</div>}
+          {order.result_notes&&<div style={{fontSize:13,color:'#1e293b',marginTop:4,background:'#f0fdf4',borderRadius:4,padding:'6px 10px',border:'1px solid #bbf7d0'}}><b>Report:</b> {order.result_notes}</div>}
+        </div>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-start'}}>
+          {order.status==='ordered'&&order.fax_number&&(
+            <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px'}} onClick={faxOrder} disabled={saving}>
+              {saving?<Spinner/>:<>📠 Fax to Radiology</>}
+            </button>
+          )}
+          {(order.status==='faxed'||order.status==='ordered')&&(
+            <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>update({status:'scheduled'})}>Mark Scheduled</button>
+          )}
+          {order.status==='scheduled'&&(
+            <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>update({status:'completed'})}>Mark Completed</button>
+          )}
+          {(order.status==='completed'||order.status==='scheduled'||order.status==='faxed')&&(
+            <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px',background:'#16a34a'}} onClick={()=>setShowResults(true)}>📋 Add Results</button>
+          )}
+          {order.status!=='cancelled'&&order.status!=='results_received'&&(
+            <button className="btn btn-danger" style={{fontSize:12,padding:'4px 8px'}} onClick={()=>update({status:'cancelled'})}>✕</button>
+          )}
+        </div>
+      </div>
+      {showResults&&(
+        <div style={{marginTop:12,background:'#f8fafc',borderRadius:6,padding:12,border:'1px solid #e2e8f0'}}>
+          <div style={{fontWeight:600,marginBottom:8}}>📋 Enter Results / Radiology Report</div>
+          <textarea className="input" rows={4} style={{width:'100%',marginBottom:8}} placeholder="Radiologist impression / findings…" value={resultNotes} onChange={e=>setResultNotes(e.target.value)}/>
+          <div style={{marginBottom:8}}>
+            <label className="label">Attach Report PDF (optional)</label>
+            <input type="file" accept="application/pdf" onChange={e=>setResultFile(e.target.files[0])} style={{fontSize:13}}/>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button className="btn btn-primary" style={{background:'#16a34a'}} onClick={submitResults} disabled={saving}>{saving?<Spinner/>:'Save Results'}</button>
+            <button className="btn btn-secondary" onClick={()=>setShowResults(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImagingOrderForm({token,patient,onSave,onCancel}){
   const toast=useToast();
-  const [form,setForm]=useState({study_type:'',body_part:'',clinical_indication:'',priority:'routine',facility:'',fax_number:'',notes:''});
+  const [form,setForm]=useState({study_type:'',body_part:'',clinical_indication:'',priority:'routine',facility:'',fax_number:'',cpt_code:'',notes:''});
   const [saving,setSaving]=useState(false);
   const submit=async e=>{e.preventDefault();setSaving(true);
     try{const d=await api('POST','/api/imaging-orders',{...form,patient_id:patient.id},token);if(d){toast('Imaging order created');onSave(d);}}
@@ -1314,12 +1423,14 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
       <h3 style={{fontWeight:700,marginBottom:12}}>New Imaging Order — {patient.first_name} {patient.last_name}</h3>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
-          <div><label className="label">Study Type *</label><select className="input" value={form.study_type} onChange={s('study_type')} required><option value="">Select…</option>{['X-Ray','CT Scan','MRI','Ultrasound','PET Scan','Mammogram','DEXA Scan','Echocardiogram','Nuclear Medicine'].map(t=><option key={t}>{t}</option>)}</select></div>
+          <div><label className="label">Study Type *</label><select className="input" value={form.study_type} onChange={s('study_type')} required><option value="">Select…</option>{['X-Ray','CT Scan','MRI','Ultrasound','PET Scan','Mammogram','DEXA Scan','Echocardiogram','Nuclear Medicine','Fluoroscopy','Bone Scan','Angiography'].map(t=><option key={t}>{t}</option>)}</select></div>
           <div><label className="label">Body Part *</label><input className="input" value={form.body_part} onChange={s('body_part')} placeholder="e.g. Chest, Left Knee" required/></div>
-          <div><label className="label">Priority</label><select className="input" value={form.priority} onChange={s('priority')}><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="stat">STAT</option></select></div>
+          <div><label className="label">Priority</label><select className="input" value={form.priority} onChange={s('priority')}><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="STAT">STAT</option></select></div>
+          <div><label className="label">CPT Code</label><input className="input" value={form.cpt_code} onChange={s('cpt_code')} placeholder="e.g. 71046"/></div>
           <div><label className="label">Facility Name</label><input className="input" value={form.facility} onChange={s('facility')}/></div>
           <div><label className="label">Facility Fax #</label><input className="input" value={form.fax_number} onChange={s('fax_number')} placeholder="+15551234567"/></div>
-          <div><label className="label">Clinical Indication</label><input className="input" value={form.clinical_indication} onChange={s('clinical_indication')}/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Clinical Indication *</label><input className="input" value={form.clinical_indication} onChange={s('clinical_indication')} placeholder="Reason for exam, relevant history…" required/></div>
+          <div style={{gridColumn:'span 2'}}><label className="label">Special Instructions</label><textarea className="input" rows={2} value={form.notes} onChange={s('notes')} placeholder="Contrast, patient prep, urgency notes…"/></div>
         </div>
         <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Order'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
       </form>
