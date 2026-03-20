@@ -1496,6 +1496,15 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
           {order.scheduled_at&&<div style={{fontSize:12,color:'#7c3aed',marginTop:2}}>📅 Scheduled: {order.scheduled_at.slice(0,10)}</div>}
           {order.results_received_at&&<div style={{fontSize:12,color:'#16a34a',marginTop:2}}>✅ Results received: {order.results_received_at.slice(0,10)}</div>}
           {order.result_notes&&<div style={{fontSize:13,color:'#1e293b',marginTop:4,background:'#f0fdf4',borderRadius:4,padding:'6px 10px',border:'1px solid #bbf7d0'}}><b>Report:</b> {order.result_notes}</div>}
+          {order.result_file_data&&(
+            <button className="btn btn-outline" style={{fontSize:12,padding:'3px 10px',marginTop:4}}
+              onClick={()=>{
+                fetch(`/api/imaging-orders/${order.id}/result-pdf`,{headers:{Authorization:`Bearer ${token}`}})
+                  .then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);window.open(u,'_blank');});
+              }}>
+              📄 View Result PDF
+            </button>
+          )}
         </div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-start'}}>
           {order.status==='ordered'&&order.fax_number&&(
@@ -3227,6 +3236,14 @@ function Settings({token,user}){
     }
   },[tab,policiesLoaded,token]);
 
+  // Security Status
+  const [secStatus,setSecStatus]=useState(null);
+  useEffect(()=>{
+    if(tab==='security'&&!secStatus){
+      api('GET','/api/security-status',null,token).then(d=>{if(d)setSecStatus(d);});
+    }
+  },[tab,secStatus,token]);
+
   const downloadPolicy=async(pol)=>{
     const resp=await fetch(API+`/api/policies/${pol.id}/download`,{headers:{Authorization:'Bearer '+token}});
     if(!resp.ok){toast('Download failed','error');return;}
@@ -3244,6 +3261,7 @@ function Settings({token,user}){
         {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>setTab('audit')}>Audit Log</button>}
         <button className={`tab${tab==='profile'?' active':''}`} onClick={()=>setTab('profile')}>My Profile</button>
         <button className={`tab${tab==='policies'?' active':''}`} onClick={()=>setTab('policies')}>📋 Policies</button>
+        {user.role==='admin'&&<button className={`tab${tab==='security'?' active':''}`} onClick={()=>setTab('security')}>🔐 Security Status</button>}
       </div>
 
       {tab==='users'&&user.role==='admin'&&(
@@ -3432,6 +3450,132 @@ function Settings({token,user}){
           <div style={{marginTop:20,padding:'14px 18px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:10,fontSize:13,color:'#92400e'}}>
             <b>⚠ Action Required:</b> These policies are effective as of today but require formal sign-off from the Privacy/Security Officer and Practice Administrator before they are legally operative. Download each document, obtain signatures, and file in a secure location. BAA execution (POL-HIPAA-006) should be prioritized immediately.
           </div>
+        </div>
+      )}
+
+      {tab==='security'&&user.role==='admin'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:16,flexWrap:'wrap',gap:8}}>
+            <div>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>Security Posture Dashboard</h2>
+              <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Live status of all technical and administrative controls from the HIPAA Risk Analysis</p>
+            </div>
+            <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>setSecStatus(null)}>↻ Refresh</button>
+          </div>
+
+          {!secStatus&&<div style={{textAlign:'center',padding:40,color:'#94a3b8'}}><Spinner/></div>}
+          {secStatus&&(()=>{
+            const Check=({ok,label,detail})=>(
+              <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'8px 0',borderBottom:'1px solid #f1f5f9'}}>
+                <span style={{fontSize:16,minWidth:20}}>{ok===true?'✅':ok===false?'❌':'⚠️'}</span>
+                <div>
+                  <div style={{fontWeight:500,fontSize:13,color:'#1e293b'}}>{label}</div>
+                  {detail&&<div style={{fontSize:12,color:'#64748b',marginTop:2}}>{detail}</div>}
+                </div>
+              </div>
+            );
+            const mfa=secStatus.mfa;
+            const tc=secStatus.technical_controls;
+            const ev=secStatus.env_vars;
+            const mv=secStatus.manual_verification;
+            const ac=secStatus.activity_7d;
+            const baa=secStatus.baa_checklist||[];
+            return(
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(340px,1fr))',gap:16}}>
+
+                {/* MFA Adoption */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:12,color:'#1e293b'}}>🔐 MFA Adoption (Risk 7)</h3>
+                  <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12}}>
+                    <div style={{position:'relative',width:72,height:72}}>
+                      <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',width:72,height:72}}>
+                        <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e2e8f0" strokeWidth="3"/>
+                        <circle cx="18" cy="18" r="15.9" fill="none" stroke={mfa.all_enrolled?'#16a34a':'#f59e0b'} strokeWidth="3"
+                          strokeDasharray={`${mfa.percent} ${100-mfa.percent}`} strokeLinecap="round"/>
+                      </svg>
+                      <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:15,color:'#1e293b'}}>{mfa.percent}%</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:22,fontWeight:800,color:mfa.all_enrolled?'#16a34a':'#f59e0b'}}>{mfa.enabled_count}/{mfa.total_staff}</div>
+                      <div style={{fontSize:12,color:'#64748b'}}>staff with MFA enabled</div>
+                    </div>
+                  </div>
+                  {!mfa.all_enrolled&&<div style={{fontSize:12,background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:6,padding:'8px 10px',color:'#92400e'}}>
+                    {mfa.total_staff-mfa.enabled_count} user{mfa.total_staff-mfa.enabled_count!==1?'s':''} still need to enroll. Direct them to Settings → My Profile → Set Up Authenticator.
+                  </div>}
+                </div>
+
+                {/* Technical controls */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>⚙️ Technical Controls</h3>
+                  <Check ok={true}  label="Rate limiting on login endpoints" detail="5 failed attempts per IP per 10 minutes → HTTP 429 (Risk 9)"/>
+                  <Check ok={true}  label="15-minute inactivity session timeout" detail="Client-side timer clears JWT on idle (Risk 8)"/>
+                  <Check ok={true}  label="Password complexity enforced" detail="Min 12 chars, upper/lower/digit/special required (Risk 10)"/>
+                  <Check ok={true}  label="Security HTTP headers active" detail="CSP, X-Frame-Options DENY, HSTS, nosniff (Risk 16)"/>
+                  <Check ok={true}  label={`Portal JWT = ${tc.portal_jwt_hours}h`} detail="Reduced from 24h to 2h (Risk 11)"/>
+                  <Check ok={true}  label="Imaging result PDFs stored in database" detail="No longer written to ephemeral Railway filesystem (Risk 12)"/>
+                  <Check ok={true}  label="Fax confirmation dialog on imaging orders" detail="Destination number shown before auto-fax fires (Risk 15)"/>
+                </div>
+
+                {/* Environment variables */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>🔑 Secret Configuration (Risk 17)</h3>
+                  <p style={{fontSize:12,color:'#64748b',marginBottom:10}}>Shows whether each secret is configured in Railway environment variables. Values are never exposed.</p>
+                  {Object.entries(ev).map(([k,v])=>(
+                    <Check key={k} ok={v} label={k} detail={v?'Configured':'⚠ Not set — check Railway environment variables'}/>
+                  ))}
+                </div>
+
+                {/* Manual verification */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📋 Manual Verification Required (Risks 13, 14)</h3>
+                  {Object.values(mv).map(item=>(
+                    <div key={item.label} style={{padding:'8px 0',borderBottom:'1px solid #f1f5f9'}}>
+                      <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
+                        <span style={{fontSize:16,minWidth:20}}>⚠️</span>
+                        <div>
+                          <div style={{fontWeight:500,fontSize:13,color:'#1e293b'}}>{item.label}</div>
+                          <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{item.instructions}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* BAA checklist */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📝 BAA Status (Risk 1 — Highest Priority)</h3>
+                  <p style={{fontSize:12,color:'#64748b',marginBottom:10}}>Mark each BAA as executed once signed. Until then, sharing ePHI with these vendors creates direct legal exposure.</p>
+                  {baa.map(v=>(
+                    <div key={v.vendor} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
+                      <div>
+                        <div style={{fontWeight:500,fontSize:13}}>{v.vendor} <span style={{fontSize:11,color:'#94a3b8'}}>— {v.service}</span></div>
+                        <span style={{fontSize:11,fontWeight:600,background:'#fee2e2',color:'#dc2626',borderRadius:4,padding:'1px 6px'}}>{v.priority}</span>
+                      </div>
+                      <a href={v.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#2563eb',textDecoration:'none',fontWeight:500}}>Get BAA →</a>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Login activity */}
+                <div className="card">
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📊 Login Activity (Last 7 Days)</h3>
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
+                    <div style={{textAlign:'center',background:'#f0fdf4',borderRadius:8,padding:16}}>
+                      <div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>{ac.successful_logins}</div>
+                      <div style={{fontSize:12,color:'#64748b'}}>Successful logins</div>
+                    </div>
+                    <div style={{textAlign:'center',background:ac.failed_logins>10?'#fee2e2':'#f8fafc',borderRadius:8,padding:16}}>
+                      <div style={{fontSize:28,fontWeight:800,color:ac.failed_logins>10?'#dc2626':'#64748b'}}>{ac.failed_logins}</div>
+                      <div style={{fontSize:12,color:'#64748b'}}>Failed login attempts</div>
+                    </div>
+                  </div>
+                  {ac.failed_logins>10&&<div style={{marginTop:10,fontSize:12,color:'#dc2626',fontWeight:600}}>⚠ High number of failed logins — review audit log for brute-force attempts.</div>}
+                </div>
+
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

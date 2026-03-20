@@ -117,7 +117,9 @@ class ImagingOrder(Base):
     completed_at = Column(DateTime, nullable=True)
     results_received_at = Column(DateTime, nullable=True)
     result_notes = Column(Text, default="")           # radiologist report / impression
-    result_file_path = Column(String, default="")     # uploaded PDF path
+    result_file_path = Column(String, default="")     # legacy filesystem path (deprecated)
+    result_file_data = Column(Text, nullable=True)    # base64-encoded PDF stored in DB (Risk 12)
+    result_file_name = Column(String, default="")     # original filename for download
     created_at  = Column(DateTime, default=datetime.utcnow)
 
 

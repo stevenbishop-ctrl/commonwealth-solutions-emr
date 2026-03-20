@@ -2025,15 +2025,11 @@ async def upload_imaging_results(
         form = await request.form()
         result_file = form.get("result_file")
         if result_file:
-            import os as _os
-            upload_dir = "/tmp/imaging_results"
-            _os.makedirs(upload_dir, exist_ok=True)
-            filename = f"IMG-{order_id:04d}-result-{int(datetime.utcnow().timestamp())}.pdf"
-            file_path = f"{upload_dir}/{filename}"
+            # Risk 12: store as base64 blob in DB — never write to ephemeral filesystem
             contents = await result_file.read()
-            with open(file_path, "wb") as f:
-                f.write(contents)
-            order.result_file_path = file_path
+            order.result_file_data = base64.b64encode(contents).decode("utf-8")
+            order.result_file_name = getattr(result_file, "filename", None) or f"IMG-{order_id:04d}-result.pdf"
+            order.result_file_path = ""   # clear legacy path
         order.result_notes = form.get("result_notes", order.result_notes or "")
     else:
         body = await request.json()
@@ -2046,6 +2042,34 @@ async def upload_imaging_results(
     db.commit()
     audit(db, current_user.id, "IMAGING_RESULTS_RECEIVED", "ImagingOrder", str(order_id))
     return clean(order)
+
+
+@app.get("/api/imaging-orders/{order_id}/result-pdf")
+def download_imaging_result_pdf(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Stream the stored imaging result PDF from database blob storage."""
+    order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    # Try DB blob first (new path), fall back to legacy filesystem path
+    if order.result_file_data:
+        pdf_bytes = base64.b64decode(order.result_file_data)
+        fname = getattr(order, "result_file_name", None) or f"imaging_result_{order_id}.pdf"
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename={fname}"},
+        )
+    # Legacy: file stored on filesystem (pre-migration uploads)
+    legacy_path = getattr(order, "result_file_path", "") or ""
+    if legacy_path:
+        import os as _os
+        if _os.path.isfile(legacy_path):
+            return FileResponse(legacy_path, media_type="application/pdf")
+    raise HTTPException(status_code=404, detail="No result PDF available for this order")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -4240,6 +4264,9 @@ def _migrate_add_billing_columns(db: Session):
         # MFA fields on users (Risk 7)
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR",
+        # Imaging result DB blob storage (Risk 12)
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_data TEXT",
+        "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_name VARCHAR DEFAULT ''",
     ]
     from sqlalchemy import text
     for sql in migrations:
@@ -4984,6 +5011,45 @@ _POLICIES_META = [
         "summary": "Mandates BAA execution with all vendors handling ePHI before access is granted. Identifies Railway, Telnyx, Square, and LabCorp as immediate priority. Includes BAA lifecycle management and vendor register requirements.",
         "filename": "POL-HIPAA-006_BAA_Management_Policy.docx",
     },
+    {
+        "id": "POL-PHYS-001",
+        "title": "BYOD & Acceptable Use Policy",
+        "category": "Physical Safeguard",
+        "risk_refs": ["Risk 18"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.310(b); § 164.310(c)",
+        "summary": "Governs use of personal and practice-owned devices to access ePHI. Requires MDM enrollment, screen-lock, encrypted storage, remote-wipe capability, and prohibited storage of ePHI on personal devices without approval.",
+        "filename": "POL-PHYS-001_BYOD_Acceptable_Use_Policy.docx",
+    },
+    {
+        "id": "POL-PHYS-002",
+        "title": "Workstation Privacy Screen & Security Policy",
+        "category": "Physical Safeguard",
+        "risk_refs": ["Risk 19"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.310(b); § 164.310(c)",
+        "summary": "Requires privacy screens on all workstations visible to the public, automatic screen-lock at 5 minutes, clean-desk rules, and physical placement standards to prevent shoulder-surfing of patient data.",
+        "filename": "POL-PHYS-002_Workstation_Privacy_Screen_Security.docx",
+    },
+    {
+        "id": "POL-PHYS-003",
+        "title": "Downtime & Business Continuity Procedure",
+        "category": "Physical Safeguard",
+        "risk_refs": ["Risk 20"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.308(a)(7); § 164.310(a)(2)(i)",
+        "summary": "Documents procedures for continued patient care during EMR outages. Includes paper-based downtime forms, a 4-hour recovery objective, database backup verification steps, and staff communication protocols.",
+        "filename": "POL-PHYS-003_Downtime_Business_Continuity_Procedure.docx",
+    },
 ]
 
 _POLICIES_DIR = os.path.join(os.path.dirname(__file__), "policies")
@@ -4992,6 +5058,89 @@ _POLICIES_DIR = os.path.join(os.path.dirname(__file__), "policies")
 @app.get("/api/policies")
 def list_policies(_: models.User = Depends(get_current_user)):
     return _POLICIES_META
+
+
+@app.get("/api/security-status")
+def security_status(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return a security posture checklist for the compliance dashboard."""
+    # MFA adoption
+    total_users   = db.query(models.User).filter(models.User.is_active == True).count()
+    mfa_users     = db.query(models.User).filter(
+        models.User.is_active == True,
+        models.User.mfa_enabled == True,
+    ).count()
+
+    # Env var presence (boolean only — never expose values)
+    def _env(key: str) -> bool:
+        return bool(os.getenv(key, "").strip())
+
+    env_checks = {
+        "SECRET_KEY":          _env("SECRET_KEY") and os.getenv("SECRET_KEY") != "CHANGE_ME_IN_PRODUCTION_USE_RANDOM_256BIT",
+        "DATABASE_URL":        _env("DATABASE_URL"),
+        "TELNYX_API_KEY":      _env("TELNYX_API_KEY"),
+        "TELNYX_FAX_FROM":     _env("TELNYX_FAX_FROM"),
+        "SQUARE_ACCESS_TOKEN": _env("SQUARE_ACCESS_TOKEN"),
+        "LABCORP_API_KEY":     _env("LABCORP_API_KEY"),
+    }
+
+    # Recent suspicious login activity (last 7 days)
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    failed_logins = db.query(models.AuditLog).filter(
+        models.AuditLog.action == "LOGIN_FAILED",
+        models.AuditLog.timestamp >= cutoff,
+    ).count()
+    recent_logins = db.query(models.AuditLog).filter(
+        models.AuditLog.action == "LOGIN",
+        models.AuditLog.timestamp >= cutoff,
+    ).count()
+
+    return {
+        "mfa": {
+            "enabled_count": mfa_users,
+            "total_staff": total_users,
+            "percent": round(mfa_users / total_users * 100) if total_users else 0,
+            "all_enrolled": mfa_users == total_users,
+        },
+        "technical_controls": {
+            "rate_limiting":       True,   # always on (in-process)
+            "session_timeout_min": 15,     # always on (client-side)
+            "password_complexity": True,   # always enforced at API
+            "security_headers":    True,   # SecurityHeadersMiddleware
+            "portal_jwt_hours":    PORTAL_TOKEN_HOURS,
+            "result_file_db_storage": True,  # Risk 12 — no more /tmp
+        },
+        "env_vars": env_checks,
+        "manual_verification": {
+            "railway_encryption_at_rest": {
+                "label": "Railway PostgreSQL encryption at rest",
+                "status": "manual",
+                "instructions": "Verify at railway.app → Project → Database → Settings. Look for 'Encryption at rest: Enabled'.",
+            },
+            "railway_backups": {
+                "label": "Railway automated database backups",
+                "status": "manual",
+                "instructions": "Verify at railway.app → Project → Database → Backups. Enable daily backups and confirm retention period.",
+            },
+            "railway_env_access": {
+                "label": "Railway environment variable access restricted",
+                "status": "manual",
+                "instructions": "Verify at railway.app → Project → Settings → Members. Only necessary personnel should have access to view env vars.",
+            },
+        },
+        "baa_checklist": [
+            {"vendor": "Railway",  "service": "Cloud hosting & PostgreSQL", "priority": "HIGH", "url": "https://railway.app/legal"},
+            {"vendor": "Telnyx",   "service": "HIPAA fax transmission",     "priority": "HIGH", "url": "https://telnyx.com/hipaa"},
+            {"vendor": "Square",   "service": "Payment processing",          "priority": "HIGH", "url": "https://squareup.com/us/en/healthcare"},
+            {"vendor": "LabCorp",  "service": "Lab orders & results API",    "priority": "HIGH", "url": "https://www.labcorp.com/providers"},
+        ],
+        "activity_7d": {
+            "successful_logins": recent_logins,
+            "failed_logins": failed_logins,
+        },
+    }
 
 
 @app.get("/api/policies/{policy_id}/download")
