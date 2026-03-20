@@ -9,15 +9,19 @@ Run:
 """
 
 import base64
+import collections
 import hashlib
 import json
 import os
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from io import BytesIO
 from typing import Optional
+
+import pyotp
 
 import uuid as _uuid
 
@@ -30,6 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from jose import JWTError, jwt
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -497,6 +502,85 @@ app.add_middleware(
 )
 
 
+# ── Security Headers Middleware (Risk 16) ────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        if request.url.scheme == "https":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=63072000; includeSubDomains; preload"
+            )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+            "  https://cdnjs.cloudflare.com https://unpkg.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' https://clinicaltables.nlm.nih.gov "
+            "  https://rxnav.nlm.nih.gov https://api.telnyx.com; "
+            "frame-ancestors 'none';"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+
+# ── Rate Limiter (Risk 9) ─────────────────────────────────────────────────────
+_rl_lock = threading.Lock()
+_failed_attempts: dict = collections.defaultdict(list)  # ip -> [timestamps]
+RATE_LIMIT_MAX = 5
+RATE_LIMIT_WINDOW = 600  # 10 minutes
+
+
+def _check_rate_limit(ip: str):
+    now = time.time()
+    with _rl_lock:
+        _failed_attempts[ip] = [
+            t for t in _failed_attempts[ip] if now - t < RATE_LIMIT_WINDOW
+        ]
+        if len(_failed_attempts[ip]) >= RATE_LIMIT_MAX:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many failed login attempts. Please wait 10 minutes.",
+            )
+
+
+def _record_failure(ip: str):
+    with _rl_lock:
+        _failed_attempts[ip].append(time.time())
+
+
+def _clear_failures(ip: str):
+    with _rl_lock:
+        _failed_attempts[ip] = []
+
+
+# ── Password Complexity (Risk 10) ─────────────────────────────────────────────
+def _validate_password(password: str):
+    errors = []
+    if len(password) < 12:
+        errors.append("at least 12 characters")
+    if not re.search(r"[A-Z]", password):
+        errors.append("one uppercase letter")
+    if not re.search(r"[a-z]", password):
+        errors.append("one lowercase letter")
+    if not re.search(r"\d", password):
+        errors.append("one number")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        errors.append("one special character")
+    if errors:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must contain: {', '.join(errors)}.",
+        )
+
+
 @app.get("/health")
 def health_check():
     """Railway health check endpoint."""
@@ -581,6 +665,7 @@ def user_dict(u: models.User) -> dict:
         "id": u.id, "username": u.username, "full_name": u.full_name,
         "email": u.email, "role": u.role, "npi_number": u.npi_number,
         "specialty": u.specialty, "is_active": u.is_active,
+        "mfa_enabled": bool(getattr(u, "mfa_enabled", False)),
     }
 
 
@@ -598,16 +683,104 @@ def clean(obj) -> dict:
 # AUTH
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _make_mfa_pending_token(user_id: int) -> str:
+    exp = datetime.utcnow() + timedelta(minutes=5)
+    return jwt.encode(
+        {"sub": str(user_id), "type": "mfa_pending", "exp": exp}, SECRET_KEY, ALGORITHM
+    )
+
+
 @app.post("/api/auth/login")
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(
+    form: OAuth2PasswordRequestForm = Depends(),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    ip = request.client.host if request else "unknown"
+    _check_rate_limit(ip)
     user = db.query(models.User).filter(models.User.username == form.username).first()
     if not user or not verify_pw(form.password, user.password_hash):
+        _record_failure(ip)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=401, detail="Account disabled")
+    _clear_failures(ip)
+    # If MFA is enabled, return a short-lived challenge token instead of full access
+    if getattr(user, "mfa_enabled", False) and user.mfa_secret:
+        audit(db, user.id, "LOGIN_MFA_CHALLENGE", "User", str(user.id), request=request)
+        return {"mfa_required": True, "mfa_token": _make_mfa_pending_token(user.id)}
     token = make_token(user.id, user.role)
-    audit(db, user.id, "LOGIN", "User", str(user.id))
+    audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
+
+
+@app.post("/api/auth/mfa/verify")
+def mfa_verify(data: dict, request: Request = None, db: Session = Depends(get_db)):
+    """Exchange a short-lived MFA challenge token + TOTP code for a full access token."""
+    mfa_token = data.get("mfa_token", "")
+    code = str(data.get("code", "")).strip()
+    try:
+        payload = jwt.decode(mfa_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "mfa_pending":
+            raise HTTPException(status_code=401, detail="Invalid MFA token")
+        user_id = int(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid or expired MFA token")
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user or not user.is_active or not user.mfa_secret:
+        raise HTTPException(status_code=401, detail="Invalid MFA token")
+    totp = pyotp.TOTP(user.mfa_secret)
+    if not totp.verify(code, valid_window=1):
+        raise HTTPException(status_code=401, detail="Invalid authenticator code")
+    token = make_token(user.id, user.role)
+    audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
+    return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
+
+
+@app.post("/api/auth/mfa/setup")
+def mfa_setup(current_user: models.User = Depends(get_current_user)):
+    """Generate a fresh TOTP secret for the current user to scan."""
+    secret = pyotp.random_base32()
+    uri = pyotp.TOTP(secret).provisioning_uri(
+        name=current_user.username, issuer_name="Valiant DPC"
+    )
+    return {"secret": secret, "uri": uri}
+
+
+@app.post("/api/auth/mfa/enable")
+def mfa_enable(
+    data: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Confirm the TOTP code and permanently enable MFA for the logged-in user."""
+    secret = data.get("secret", "")
+    code = str(data.get("code", "")).strip()
+    if not secret or not code:
+        raise HTTPException(status_code=400, detail="secret and code are required")
+    if not pyotp.TOTP(secret).verify(code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid authenticator code — try again")
+    current_user.mfa_secret = secret
+    current_user.mfa_enabled = True
+    db.commit()
+    audit(db, current_user.id, "MFA_ENABLED", "User", str(current_user.id))
+    return {"success": True}
+
+
+@app.post("/api/auth/mfa/disable")
+def mfa_disable(
+    data: dict,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Disable MFA after verifying the user's password."""
+    if not verify_pw(data.get("password", ""), current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect password")
+    current_user.mfa_secret = None
+    current_user.mfa_enabled = False
+    db.commit()
+    audit(db, current_user.id, "MFA_DISABLED", "User", str(current_user.id))
+    return {"success": True}
 
 
 @app.get("/api/auth/me")
@@ -623,6 +796,7 @@ def change_password(
 ):
     if not verify_pw(data.get("current_password", ""), current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password incorrect")
+    _validate_password(data["new_password"])
     current_user.password_hash = hash_pw(data["new_password"])
     db.commit()
     audit(db, current_user.id, "CHANGE_PASSWORD", "User", str(current_user.id))
@@ -646,6 +820,7 @@ def create_user(
 ):
     if db.query(models.User).filter(models.User.username == data["username"]).first():
         raise HTTPException(status_code=400, detail="Username already exists")
+    _validate_password(data["password"])
     u = models.User(
         username=data["username"],
         email=data.get("email", ""),
@@ -677,6 +852,7 @@ def update_user(
         if field in data:
             setattr(u, field, data[field])
     if "password" in data and data["password"]:
+        _validate_password(data["password"])
         u.password_hash = hash_pw(data["password"])
     db.commit()
     audit(db, current_user.id, "UPDATE_USER", "User", str(user_id))
@@ -4061,6 +4237,9 @@ def _migrate_add_billing_columns(db: Session):
         "ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS patient_visible BOOLEAN DEFAULT FALSE",
         # Fax sent_at (may already exist on some deploys)
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS fax_sent_at TIMESTAMP",
+        # MFA fields on users (Risk 7)
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR",
     ]
     from sqlalchemy import text
     for sql in migrations:
@@ -4075,7 +4254,7 @@ def _migrate_add_billing_columns(db: Session):
 # PATIENT PORTAL — auth helpers + endpoints
 # ═════════════════════════════════════════════════════════════════════════════
 
-PORTAL_TOKEN_HOURS = 24
+PORTAL_TOKEN_HOURS = 2  # Risk 11: reduced from 24h to 2h
 
 def make_portal_token(patient_id: int) -> str:
     exp = datetime.utcnow() + timedelta(hours=PORTAL_TOKEN_HOURS)
@@ -4105,15 +4284,24 @@ def get_portal_patient(
 
 
 @app.post("/portal/login")
-def portal_login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def portal_login(
+    form: OAuth2PasswordRequestForm = Depends(),
+    request: Request = None,
+    db: Session = Depends(get_db),
+):
+    ip = request.client.host if request else "unknown"
+    _check_rate_limit(ip)
     patient = db.query(models.Patient).filter(
         models.Patient.portal_email == form.username,
         models.Patient.portal_active == True,
     ).first()
     if not patient or not patient.portal_password_hash:
+        _record_failure(ip)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not verify_pw(form.password, patient.portal_password_hash):
+        _record_failure(ip)
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    _clear_failures(ip)
     return {"access_token": make_portal_token(patient.id), "token_type": "bearer"}
 
 

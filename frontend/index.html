@@ -166,6 +166,10 @@ function LoginPage({onLogin}){
   const [form,setForm]=useState({username:'',password:''});
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState('');
+  // MFA step
+  const [mfaPending,setMfaPending]=useState(false);
+  const [mfaToken,setMfaToken]=useState('');
+  const [mfaCode,setMfaCode]=useState('');
 
   const submit=async e=>{
     e.preventDefault();
@@ -177,21 +181,80 @@ function LoginPage({onLogin}){
       const r=await fetch(API+'/api/auth/login',{method:'POST',body:fd});
       if(!r.ok){const e=await r.json();throw new Error(e.detail);}
       const data=await r.json();
-      onLogin(data.access_token,data.user);
+      if(data.mfa_required){
+        setMfaToken(data.mfa_token);
+        setMfaPending(true);
+      } else {
+        onLogin(data.access_token,data.user);
+      }
     }catch(e){setErr(e.message||'Login failed');}
     finally{setLoading(false);}
   };
 
-  return(
-    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%)'}}>
-      <div style={{background:'#fff',borderRadius:20,padding:40,width:'100%',maxWidth:420,boxShadow:'0 25px 60px rgba(0,0,0,.3)'}}>
-        <div style={{textAlign:'center',marginBottom:32}}>
-          <div style={{width:60,height:60,background:'#dbeafe',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
-            <Icon name="shield" size={32} cls="" style={{color:'#2563eb'}}/>
+  const submitMfa=async e=>{
+    e.preventDefault();
+    setLoading(true);setErr('');
+    try{
+      const r=await fetch(API+'/api/auth/mfa/verify',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({mfa_token:mfaToken,code:mfaCode}),
+      });
+      if(!r.ok){const e=await r.json();throw new Error(e.detail);}
+      const data=await r.json();
+      onLogin(data.access_token,data.user);
+    }catch(e){setErr(e.message||'Invalid code');setMfaCode('');}
+    finally{setLoading(false);}
+  };
+
+  const cardStyle={background:'#fff',borderRadius:20,padding:40,width:'100%',maxWidth:420,boxShadow:'0 25px 60px rgba(0,0,0,.3)'};
+  const wrapStyle={minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%)'};
+
+  const header=(
+    <div style={{textAlign:'center',marginBottom:32}}>
+      <div style={{width:60,height:60,background:'#dbeafe',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+        <Icon name="shield" size={32} cls="" style={{color:'#2563eb'}}/>
+      </div>
+      <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>MedFlow EMR</h1>
+      <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
+    </div>
+  );
+
+  if(mfaPending){
+    return(
+      <div style={wrapStyle}>
+        <div style={cardStyle}>
+          {header}
+          <div style={{textAlign:'center',marginBottom:20}}>
+            <div style={{fontSize:40,marginBottom:8}}>🔐</div>
+            <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>Two-Factor Verification</h2>
+            <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Enter the 6-digit code from your authenticator app.</p>
           </div>
-          <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>MedFlow EMR</h1>
-          <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
+          {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
+          <form onSubmit={submitMfa}>
+            <div style={{marginBottom:20}}>
+              <label className="label">Authenticator Code</label>
+              <input className="input" value={mfaCode} onChange={e=>setMfaCode(e.target.value.replace(/\D/g,'').slice(0,6))}
+                placeholder="000000" maxLength={6} inputMode="numeric" autoFocus style={{fontSize:22,letterSpacing:8,textAlign:'center'}} required/>
+            </div>
+            <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',padding:'11px'}} disabled={loading||mfaCode.length<6}>
+              {loading?<Spinner/>:'Verify'}
+            </button>
+          </form>
+          <button style={{width:'100%',marginTop:12,fontSize:13,color:'#64748b',background:'none',border:'none',cursor:'pointer'}}
+            onClick={()=>{setMfaPending(false);setMfaToken('');setMfaCode('');setErr('');}}>
+            ← Back to login
+          </button>
+          <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:16}}>HIPAA-compliant • All access is logged</p>
         </div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={wrapStyle}>
+      <div style={cardStyle}>
+        {header}
         {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
         <form onSubmit={submit}>
           <div style={{marginBottom:16}}>
@@ -1561,9 +1624,19 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
   const [form,setForm]=useState({study_type:'',body_part:'',clinical_indication:'',priority:'routine',facility:'',fax_number:'',cpt_code:'',notes:''});
   const [icd10,setIcd10]=useState([]);
   const [saving,setSaving]=useState(false);
-  const submit=async e=>{e.preventDefault();setSaving(true);
+  const [faxConfirm,setFaxConfirm]=useState(false); // Risk 15: fax confirmation dialog
+
+  const doCreate=async()=>{
+    setSaving(true);setFaxConfirm(false);
     try{const d=await api('POST','/api/imaging-orders',{...form,icd10_codes:icd10.map(i=>i.code),patient_id:patient.id},token);if(d){toast('Imaging order created');onSave(d);}}
     catch(e){toast(e.message,'error');}setSaving(false);};
+
+  const submit=async e=>{
+    e.preventDefault();
+    // If fax number present, show confirmation first (Risk 15)
+    if(form.fax_number&&form.fax_number.trim()){setFaxConfirm(true);return;}
+    doCreate();
+  };
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
     <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
@@ -1601,6 +1674,30 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
         </div>
         <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Order'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
       </form>
+
+      {/* Fax Confirmation Dialog (Risk 15) */}
+      {faxConfirm&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'#fff',borderRadius:16,padding:32,maxWidth:400,width:'90%',boxShadow:'0 25px 60px rgba(0,0,0,.3)'}}>
+            <div style={{fontSize:40,textAlign:'center',marginBottom:12}}>📠</div>
+            <h3 style={{fontWeight:700,fontSize:18,color:'#1e293b',textAlign:'center',marginBottom:8}}>Confirm Fax Destination</h3>
+            <p style={{fontSize:14,color:'#475569',textAlign:'center',marginBottom:6}}>
+              This imaging order will be automatically faxed to:
+            </p>
+            <div style={{background:'#f0f9ff',border:'2px solid #0ea5e9',borderRadius:10,padding:'12px 20px',textAlign:'center',margin:'12px 0 20px',fontFamily:'monospace',fontSize:20,fontWeight:700,color:'#0369a1',letterSpacing:2}}>
+              {form.fax_number}
+            </div>
+            {form.facility&&<p style={{fontSize:13,color:'#64748b',textAlign:'center',marginBottom:20}}>Facility: <b>{form.facility}</b></p>}
+            <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginBottom:20}}>
+              Please verify this is the correct fax number before sending. Misdirected faxes may expose PHI.
+            </p>
+            <div style={{display:'flex',gap:10,justifyContent:'center'}}>
+              <button className="btn btn-primary" onClick={doCreate} disabled={saving}>{saving?<Spinner/>:'Yes, Send Fax'}</button>
+              <button className="btn btn-secondary" onClick={()=>setFaxConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3076,6 +3173,13 @@ function Settings({token,user}){
   const [saving,setSaving]=useState(false);
   const [pwForm,setPwForm]=useState({current_password:'',new_password:'',confirm:''});
   const [pwSaving,setPwSaving]=useState(false);
+  // MFA state
+  const [mfaEnabled,setMfaEnabled]=useState(user.mfa_enabled||false);
+  const [mfaSetup,setMfaSetup]=useState(null); // {secret, uri}
+  const [mfaCode,setMfaCode]=useState('');
+  const [mfaSaving,setMfaSaving]=useState(false);
+  const [mfaDisablePw,setMfaDisablePw]=useState('');
+  const [mfaDisableMode,setMfaDisableMode]=useState(false);
 
   useEffect(()=>{
     if(user.role==='admin'){
@@ -3098,6 +3202,21 @@ function Settings({token,user}){
     setPwSaving(true);
     try{await api('PUT','/api/auth/me/password',{current_password:pwForm.current_password,new_password:pwForm.new_password},token);toast('Password changed');setPwForm({current_password:'',new_password:'',confirm:''});}
     catch(e){toast(e.message,'error');}setPwSaving(false);};
+
+  const startMfaSetup=async()=>{
+    try{const d=await api('POST','/api/auth/mfa/setup',null,token);if(d){setMfaSetup(d);setMfaCode('');}}
+    catch(e){toast(e.message,'error');};
+  };
+
+  const enableMfa=async e=>{e.preventDefault();if(!mfaSetup)return;setMfaSaving(true);
+    try{await api('POST','/api/auth/mfa/enable',{secret:mfaSetup.secret,code:mfaCode},token);
+      toast('Two-factor authentication enabled');setMfaEnabled(true);setMfaSetup(null);setMfaCode('');}
+    catch(e){toast(e.message,'error');}setMfaSaving(false);};
+
+  const disableMfa=async e=>{e.preventDefault();setMfaSaving(true);
+    try{await api('POST','/api/auth/mfa/disable',{password:mfaDisablePw},token);
+      toast('Two-factor authentication disabled');setMfaEnabled(false);setMfaDisableMode(false);setMfaDisablePw('');}
+    catch(e){toast(e.message,'error');}setMfaSaving(false);};
 
   return(
     <div>
@@ -3166,18 +3285,85 @@ function Settings({token,user}){
       )}
 
       {tab==='profile'&&(
-        <div className="card" style={{maxWidth:480}}>
-          <h3 style={{fontWeight:600,marginBottom:4}}>Change Password</h3>
-          <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Logged in as: <b>{user.full_name}</b> ({user.role})</p>
-          <form onSubmit={changePw}>
-            {[['Current Password','current_password'],['New Password','new_password'],['Confirm New Password','confirm']].map(([l,k])=>(
-              <div key={k} style={{marginBottom:12}}>
-                <label className="label">{l}</label>
-                <input className="input" type="password" value={pwForm[k]} onChange={e=>setPwForm({...pwForm,[k]:e.target.value})} required/>
+        <div style={{display:'flex',flexDirection:'column',gap:16,maxWidth:520}}>
+          {/* Password change */}
+          <div className="card">
+            <h3 style={{fontWeight:600,marginBottom:4}}>Change Password</h3>
+            <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Logged in as: <b>{user.full_name}</b> ({user.role})</p>
+            <p style={{fontSize:12,color:'#64748b',marginBottom:12,background:'#f8fafc',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0'}}>
+              Password must be at least 12 characters and include uppercase, lowercase, a number, and a special character.
+            </p>
+            <form onSubmit={changePw}>
+              {[['Current Password','current_password'],['New Password','new_password'],['Confirm New Password','confirm']].map(([l,k])=>(
+                <div key={k} style={{marginBottom:12}}>
+                  <label className="label">{l}</label>
+                  <input className="input" type="password" value={pwForm[k]} onChange={e=>setPwForm({...pwForm,[k]:e.target.value})} required/>
+                </div>
+              ))}
+              <button className="btn btn-primary" type="submit" disabled={pwSaving}>{pwSaving?<Spinner/>:'Update Password'}</button>
+            </form>
+          </div>
+
+          {/* MFA setup */}
+          <div className="card">
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+              <div>
+                <h3 style={{fontWeight:600,marginBottom:2}}>Two-Factor Authentication</h3>
+                <p style={{fontSize:13,color:'#64748b'}}>
+                  {mfaEnabled
+                    ?<span style={{color:'#16a34a',fontWeight:600}}>✓ Enabled — your account is protected by TOTP</span>
+                    :'Add an extra layer of security with an authenticator app.'}
+                </p>
               </div>
-            ))}
-            <button className="btn btn-primary" type="submit" disabled={pwSaving}>{pwSaving?<Spinner/>:'Update Password'}</button>
-          </form>
+              {mfaEnabled&&!mfaDisableMode&&(
+                <button className="btn btn-warning" style={{fontSize:12}} onClick={()=>setMfaDisableMode(true)}>Disable</button>
+              )}
+            </div>
+
+            {/* Disable MFA form */}
+            {mfaEnabled&&mfaDisableMode&&(
+              <form onSubmit={disableMfa} style={{background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:8,padding:16,marginBottom:12}}>
+                <p style={{fontSize:13,color:'#92400e',marginBottom:10}}>Enter your password to disable two-factor authentication.</p>
+                <input className="input" type="password" value={mfaDisablePw} onChange={e=>setMfaDisablePw(e.target.value)} placeholder="Your password" required style={{marginBottom:10}}/>
+                <div style={{display:'flex',gap:8}}>
+                  <button className="btn btn-warning" type="submit" disabled={mfaSaving}>{mfaSaving?<Spinner/>:'Confirm Disable'}</button>
+                  <button className="btn btn-secondary" type="button" onClick={()=>{setMfaDisableMode(false);setMfaDisablePw('');}}>Cancel</button>
+                </div>
+              </form>
+            )}
+
+            {/* Enable MFA flow */}
+            {!mfaEnabled&&!mfaSetup&&(
+              <button className="btn btn-primary" onClick={startMfaSetup}><Icon name="shield" size={15}/>Set Up Authenticator</button>
+            )}
+
+            {!mfaEnabled&&mfaSetup&&(
+              <div>
+                <p style={{fontSize:13,color:'#475569',marginBottom:12}}>
+                  Scan this QR code with <b>Google Authenticator</b>, <b>Authy</b>, or any TOTP app, then enter the 6-digit code below.
+                </p>
+                <div style={{display:'flex',gap:20,alignItems:'flex-start',flexWrap:'wrap',marginBottom:16}}>
+                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(mfaSetup.uri)}`}
+                    alt="MFA QR code" style={{border:'1px solid #e2e8f0',borderRadius:8,width:160,height:160}}/>
+                  <div style={{flex:1,minWidth:200}}>
+                    <p style={{fontSize:12,color:'#64748b',marginBottom:6}}>Or enter this key manually:</p>
+                    <div style={{fontFamily:'monospace',fontSize:13,background:'#f8fafc',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0',wordBreak:'break-all',letterSpacing:1}}>
+                      {mfaSetup.secret}
+                    </div>
+                  </div>
+                </div>
+                <form onSubmit={enableMfa} style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+                  <div style={{flex:1}}>
+                    <label className="label">6-Digit Verification Code</label>
+                    <input className="input" value={mfaCode} onChange={e=>setMfaCode(e.target.value.replace(/\D/g,'').slice(0,6))}
+                      placeholder="000000" maxLength={6} inputMode="numeric" style={{fontSize:18,letterSpacing:6,textAlign:'center'}} required/>
+                  </div>
+                  <button className="btn btn-primary" type="submit" disabled={mfaSaving||mfaCode.length<6}>{mfaSaving?<Spinner/>:'Activate MFA'}</button>
+                  <button className="btn btn-secondary" type="button" onClick={()=>{setMfaSetup(null);setMfaCode('');}}>Cancel</button>
+                </form>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -4198,10 +4384,35 @@ function App(){
   const [selectedPatient,setSelectedPatient]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const toast=useToast();
+  const inactivityTimer=React.useRef(null);
+
+  // Risk 8: 15-minute inactivity timeout
+  const INACTIVITY_MS=15*60*1000;
+  const resetTimer=React.useCallback(()=>{
+    if(inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    inactivityTimer.current=setTimeout(()=>{
+      // Clear session and force re-login
+      setToken(null);setUser(null);
+      localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');
+      window.dispatchEvent(new CustomEvent('session-expired'));
+    },INACTIVITY_MS);
+  },[]);
+
+  useEffect(()=>{
+    if(!token) return; // only run when logged in
+    const events=['mousemove','mousedown','keydown','touchstart','scroll','click'];
+    events.forEach(ev=>window.addEventListener(ev,resetTimer,{passive:true}));
+    resetTimer(); // start timer on login
+    return()=>{
+      events.forEach(ev=>window.removeEventListener(ev,resetTimer));
+      if(inactivityTimer.current) clearTimeout(inactivityTimer.current);
+    };
+  },[token,resetTimer]);
 
   useEffect(()=>{
     const h=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
     window.addEventListener('auth-expired',h);
+    window.addEventListener('session-expired',()=>{h();setTimeout(()=>toast&&toast('Session expired due to inactivity. Please log in again.','error'),100);});
     return()=>window.removeEventListener('auth-expired',h);
   },[]);
 

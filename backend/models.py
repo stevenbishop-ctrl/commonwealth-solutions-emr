@@ -14,6 +14,8 @@ class User(Base):
     specialty = Column(String, default="")
     role = Column(String, default="physician")  # admin, physician, staff
     is_active = Column(Boolean, default=True)
+    mfa_enabled = Column(Boolean, default=False)
+    mfa_secret = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
