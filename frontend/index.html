@@ -1505,7 +1505,23 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
     <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
-      <h3 style={{fontWeight:700,marginBottom:12}}>New Imaging Order — {patient.first_name} {patient.last_name}</h3>
+      <h3 style={{fontWeight:700,marginBottom:10}}>New Imaging Order — {patient.first_name} {patient.last_name}</h3>
+      {/* Patient demographics summary */}
+      <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:13}}>
+        <div style={{fontWeight:600,color:'#0369a1',marginBottom:4,fontSize:12,textTransform:'uppercase',letterSpacing:'0.05em'}}>Patient Information</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'4px 24px',color:'#334155'}}>
+          <div><span style={{fontWeight:600}}>Name: </span>{patient.first_name} {patient.last_name}</div>
+          <div><span style={{fontWeight:600}}>DOB: </span>{patient.date_of_birth||'—'}</div>
+          <div><span style={{fontWeight:600}}>Phone: </span>{patient.phone||'—'}</div>
+          <div><span style={{fontWeight:600}}>MRN: </span>PT-{String(patient.id).padStart(5,'0')}</div>
+          {(patient.address||patient.city)&&(
+            <div style={{gridColumn:'span 2'}}>
+              <span style={{fontWeight:600}}>Address: </span>
+              {[patient.address, [patient.city,patient.state].filter(Boolean).join(', '), patient.zip_code].filter(Boolean).join(' ')}
+            </div>
+          )}
+        </div>
+      </div>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
           <div><label className="label">Study Type *</label><select className="input" value={form.study_type} onChange={s('study_type')} required><option value="">Select…</option>{['X-Ray','CT Scan','MRI','Ultrasound','PET Scan','Mammogram','DEXA Scan','Echocardiogram','Nuclear Medicine','Fluoroscopy','Bone Scan','Angiography'].map(t=><option key={t}>{t}</option>)}</select></div>
