@@ -1429,7 +1429,7 @@ function ICD10Search({selected, onChange}){
     const timer=setTimeout(async()=>{
       setSearching(true);
       try{
-        const r=await fetch(`https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search?terms=${encodeURIComponent(query)}&maxList=10`);
+        const r=await fetch(`https://clinicaltables.nlm.nih.gov/api/icd10cm/v3/search?terms=${encodeURIComponent(query)}&maxList=10&sf=code,name&df=code,name`);
         const data=await r.json();
         // data[3] = [[code, description], ...]
         const hits=(data[3]||[]).map(([code,desc])=>({code,desc}));

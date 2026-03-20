@@ -1663,9 +1663,18 @@ def _build_imaging_order_pdf(order: models.ImagingOrder, patient: models.Patient
     # Patient info
     story.append(Paragraph("<b>PATIENT INFORMATION</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
     pt_dob = patient.date_of_birth.strftime('%m/%d/%Y') if patient.date_of_birth else ""
+    pt_addr = getattr(patient, "address", "") or ""
+    pt_city = getattr(patient, "city", "") or ""
+    pt_state = getattr(patient, "state", "") or ""
+    pt_zip = getattr(patient, "zip_code", "") or ""
+    addr_parts = [pt_addr]
+    if pt_city or pt_state or pt_zip:
+        addr_parts.append(f"{pt_city}, {pt_state} {pt_zip}".strip(", "))
+    pt_addr_full = "  ".join(p for p in addr_parts if p) or "—"
     pt_data = [
         ["Name:", f"{patient.first_name} {patient.last_name}", "DOB:", pt_dob],
-        ["Phone:", getattr(patient,"phone",""), "MRN:", f"PT-{patient.id:05d}"],
+        ["Phone:", getattr(patient, "phone", "") or "—", "MRN:", f"PT-{patient.id:05d}"],
+        ["Address:", pt_addr_full, "", ""],
     ]
     pt_table = Table(pt_data, colWidths=[1.1*inch, 2.5*inch, 1.1*inch, 2.0*inch])
     pt_table.setStyle(TableStyle([
@@ -1673,6 +1682,7 @@ def _build_imaging_order_pdf(order: models.ImagingOrder, patient: models.Patient
         ("FONTNAME", (0,0), (0,-1), "Helvetica-Bold"),
         ("FONTNAME", (2,0), (2,-1), "Helvetica-Bold"),
         ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ("SPAN", (1,2), (3,2)),   # address value spans columns 1-3
     ]))
     story.append(pt_table)
     story.append(Spacer(1, 10))
