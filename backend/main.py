@@ -4902,6 +4902,117 @@ def update_membership_plan(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# COMPLIANCE POLICIES
+# ═════════════════════════════════════════════════════════════════════════════
+
+_POLICIES_META = [
+    {
+        "id": "POL-HIPAA-001",
+        "title": "HIPAA Workforce Training Policy",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 2"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.308(a)(5)",
+        "summary": "Establishes mandatory pre-access and annual HIPAA training requirements for all workforce members, including documentation and record retention obligations.",
+        "filename": "POL-HIPAA-001_Workforce_Training_Policy.docx",
+    },
+    {
+        "id": "POL-HIPAA-002",
+        "title": "Incident Response & Breach Notification Plan",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 3"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.308(a)(6); 45 C.F.R. §§ 164.400–414",
+        "summary": "Five-phase response plan covering detection, containment, investigation, notification (60-day deadline), and post-incident remediation for security incidents involving ePHI.",
+        "filename": "POL-HIPAA-002_Incident_Response_Breach_Notification_Plan.docx",
+    },
+    {
+        "id": "POL-HIPAA-003",
+        "title": "User Access Management & Workforce Offboarding Policy",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 4"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.308(a)(3); § 164.308(a)(4)",
+        "summary": "Governs provisioning, modification, and revocation of ePHI system access. Requires same-day revocation on termination, quarterly access reviews, and minimum necessary access principles.",
+        "filename": "POL-HIPAA-003_User_Access_Management_Policy.docx",
+    },
+    {
+        "id": "POL-HIPAA-004",
+        "title": "Data Retention & Disposal Policy",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 5"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.310(d)(2); Virginia Code § 32.1-127.1:03",
+        "summary": "Defines retention schedules for all record types (5–7 years depending on type) and mandates NIST SP 800-88 compliant disposal methods for electronic and paper records.",
+        "filename": "POL-HIPAA-004_Data_Retention_Disposal_Policy.docx",
+    },
+    {
+        "id": "POL-HIPAA-005",
+        "title": "Audit Log Review Policy",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 6"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.312(b); § 164.308(a)(1)(ii)(D)",
+        "summary": "Requires weekly and monthly audit log reviews with defined anomaly triggers (e.g., 5+ failed logins, bulk record access, after-hours admin actions) and mandatory written review summaries.",
+        "filename": "POL-HIPAA-005_Audit_Log_Review_Policy.docx",
+    },
+    {
+        "id": "POL-HIPAA-006",
+        "title": "Business Associate Agreement Management Policy",
+        "category": "Administrative Safeguard",
+        "risk_refs": ["Risk 1"],
+        "version": "1.0",
+        "effective_date": "2026-03-20",
+        "next_review": "2027-03-20",
+        "owner": "Privacy & Security Officer",
+        "regulatory_basis": "45 C.F.R. § 164.308(b); § 164.504(e)",
+        "summary": "Mandates BAA execution with all vendors handling ePHI before access is granted. Identifies Railway, Telnyx, Square, and LabCorp as immediate priority. Includes BAA lifecycle management and vendor register requirements.",
+        "filename": "POL-HIPAA-006_BAA_Management_Policy.docx",
+    },
+]
+
+_POLICIES_DIR = os.path.join(os.path.dirname(__file__), "policies")
+
+
+@app.get("/api/policies")
+def list_policies(_: models.User = Depends(get_current_user)):
+    return _POLICIES_META
+
+
+@app.get("/api/policies/{policy_id}/download")
+def download_policy(
+    policy_id: str,
+    _: models.User = Depends(get_current_user),
+):
+    pol = next((p for p in _POLICIES_META if p["id"] == policy_id), None)
+    if not pol:
+        raise HTTPException(status_code=404, detail="Policy not found")
+    fpath = os.path.join(_POLICIES_DIR, pol["filename"])
+    if not os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail="Policy file not found on server")
+    return FileResponse(
+        fpath,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=pol["filename"],
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # SERVE FRONTEND
 # ═════════════════════════════════════════════════════════════════════════════
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")

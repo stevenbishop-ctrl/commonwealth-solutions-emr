@@ -3218,6 +3218,24 @@ function Settings({token,user}){
       toast('Two-factor authentication disabled');setMfaEnabled(false);setMfaDisableMode(false);setMfaDisablePw('');}
     catch(e){toast(e.message,'error');}setMfaSaving(false);};
 
+  // Policies
+  const [policies,setPolicies]=useState([]);
+  const [policiesLoaded,setPoliciesLoaded]=useState(false);
+  useEffect(()=>{
+    if(tab==='policies'&&!policiesLoaded){
+      api('GET','/api/policies',null,token).then(d=>{if(d){setPolicies(d);setPoliciesLoaded(true);}});
+    }
+  },[tab,policiesLoaded,token]);
+
+  const downloadPolicy=async(pol)=>{
+    const resp=await fetch(API+`/api/policies/${pol.id}/download`,{headers:{Authorization:'Bearer '+token}});
+    if(!resp.ok){toast('Download failed','error');return;}
+    const blob=await resp.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download=pol.filename;a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return(
     <div>
       <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:20}}>Settings</h1>
@@ -3225,6 +3243,7 @@ function Settings({token,user}){
         {user.role==='admin'&&<button className={`tab${tab==='users'?' active':''}`} onClick={()=>setTab('users')}>Users</button>}
         {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>setTab('audit')}>Audit Log</button>}
         <button className={`tab${tab==='profile'?' active':''}`} onClick={()=>setTab('profile')}>My Profile</button>
+        <button className={`tab${tab==='policies'?' active':''}`} onClick={()=>setTab('policies')}>📋 Policies</button>
       </div>
 
       {tab==='users'&&user.role==='admin'&&(
@@ -3363,6 +3382,55 @@ function Settings({token,user}){
                 </form>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {tab==='policies'&&(
+        <div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:16,flexWrap:'wrap',gap:8}}>
+            <div>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>HIPAA Policies & Procedures</h2>
+              <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Six administrative safeguard policies — version 1.0 · Effective March 20, 2026 · Next review March 20, 2027</p>
+            </div>
+            <span style={{fontSize:12,background:'#dcfce7',color:'#15803d',fontWeight:600,padding:'4px 10px',borderRadius:20}}>6 Policies Active</span>
+          </div>
+
+          {!policiesLoaded&&<div style={{textAlign:'center',padding:40,color:'#94a3b8'}}><Spinner/></div>}
+
+          <div style={{display:'flex',flexDirection:'column',gap:12}}>
+            {policies.map(pol=>(
+              <div key={pol.id} className="card" style={{padding:0,overflow:'hidden'}}>
+                {/* Header bar */}
+                <div style={{background:'#1e3a5f',padding:'12px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                  <div style={{display:'flex',gap:10,alignItems:'center'}}>
+                    <span style={{fontFamily:'monospace',fontSize:11,background:'rgba(255,255,255,.15)',color:'#e2e8f0',padding:'2px 8px',borderRadius:4}}>{pol.id}</span>
+                    <span style={{fontWeight:700,fontSize:15,color:'#fff'}}>{pol.title}</span>
+                  </div>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <span style={{fontSize:11,color:'#94a3b8'}}>v{pol.version}</span>
+                    <button className="btn" style={{fontSize:12,padding:'4px 12px',background:'#fff',color:'#1e3a5f',fontWeight:600,border:'none'}}
+                      onClick={()=>downloadPolicy(pol)}>
+                      ⬇ Download .docx
+                    </button>
+                  </div>
+                </div>
+                {/* Body */}
+                <div style={{padding:'14px 18px'}}>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'6px 24px',marginBottom:10,fontSize:13}}>
+                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Regulatory Basis: </span><span style={{color:'#475569'}}>{pol.regulatory_basis}</span></div>
+                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Addresses: </span><span style={{color:'#475569'}}>{pol.risk_refs.join(', ')}</span></div>
+                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Owner: </span><span style={{color:'#475569'}}>{pol.owner}</span></div>
+                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Next Review: </span><span style={{color:'#475569'}}>{pol.next_review}</span></div>
+                  </div>
+                  <p style={{fontSize:13,color:'#334155',margin:0,lineHeight:1.5}}>{pol.summary}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{marginTop:20,padding:'14px 18px',background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:10,fontSize:13,color:'#92400e'}}>
+            <b>⚠ Action Required:</b> These policies are effective as of today but require formal sign-off from the Privacy/Security Officer and Practice Administrator before they are legally operative. Download each document, obtain signatures, and file in a secure location. BAA execution (POL-HIPAA-006) should be prioritized immediately.
           </div>
         </div>
       )}
