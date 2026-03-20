@@ -3772,10 +3772,36 @@ def _seed_membership_plans(db: Session):
     db.commit()
 
 
+def _migrate_add_billing_columns(db: Session):
+    """
+    Add billing columns to the memberships table if they don't exist.
+    SQLAlchemy create_all() never adds columns to existing tables, so we
+    run ALTER TABLE ... ADD COLUMN IF NOT EXISTS for each new column.
+    Safe to run repeatedly — IF NOT EXISTS is a no-op when already present.
+    """
+    migrations = [
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS next_billing_date TIMESTAMP",
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS last_billed_at TIMESTAMP",
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS billing_failure_count INTEGER DEFAULT 0",
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS billing_status VARCHAR DEFAULT 'ok'",
+        "ALTER TABLE memberships ADD COLUMN IF NOT EXISTS payment_provider VARCHAR DEFAULT 'square'",
+        "ALTER TABLE crypto_payments ADD COLUMN IF NOT EXISTS zaprite_order_id VARCHAR DEFAULT ''",
+        "ALTER TABLE crypto_payments ADD COLUMN IF NOT EXISTS zaprite_checkout_url VARCHAR DEFAULT ''",
+    ]
+    from sqlalchemy import text
+    for sql in migrations:
+        try:
+            db.execute(text(sql))
+        except Exception:
+            db.rollback()  # SQLite doesn't support IF NOT EXISTS — skip silently
+    db.commit()
+
+
 @app.on_event("startup")
 def on_startup():
     db = next(get_db())
     try:
+        _migrate_add_billing_columns(db)
         _seed_membership_plans(db)
         _backfill_billing_dates(db)
     finally:
