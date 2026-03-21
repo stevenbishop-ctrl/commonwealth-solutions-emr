@@ -1278,7 +1278,12 @@ function PatientChart({token,patient,onBack,user}){
             <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
               <div>
                 <div style={{fontWeight:600}}>{m.plan_name}</div>
-                <div style={{fontSize:13,color:'#78716c'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
+                <div style={{fontSize:13,color:'#78716c'}}>
+                  {m.billing_cycle==='annual'
+                    ?`$${(m.price_annual||m.price_monthly*12||0).toFixed(2)}/yr`
+                    :`$${m.price_monthly}/mo`}
+                  {' · Started '}{m.start_date?.slice(0,10)}
+                </div>
                 {m.next_billing_date&&<div style={{fontSize:11,color:'#78716c',marginTop:2}}>Next billing: {m.next_billing_date.slice(0,10)}</div>}
                 {m.last_billed_at&&<div style={{fontSize:11,color:'#a8a29e',marginTop:1}}>Last charged: {m.last_billed_at.slice(0,10)}</div>}
                 {m.square_card_id&&<div style={{fontSize:11,color:'#a8a29e',marginTop:1}}>Square card: …{m.square_card_id.slice(-6)}</div>}
@@ -2091,27 +2096,92 @@ function FaxForm({token,patient,onSave,onCancel}){
 
 function MembershipForm({token,patient,onSave,onCancel}){
   const toast=useToast();
-  const plans=[{name:'Basic',price:99},{name:'Standard',price:149},{name:'Premium',price:249},{name:'Concierge',price:499}];
-  const [form,setForm]=useState({plan_name:'Basic',price_monthly:99,start_date:new Date().toISOString().slice(0,10)});
+  const [apiPlans,setApiPlans]=useState([]);
+  const [selectedPlan,setSelectedPlan]=useState(null);
+  const [cycle,setCycle]=useState('annual');
+  const [startDate,setStartDate]=useState(new Date().toISOString().slice(0,10));
   const [saving,setSaving]=useState(false);
-  const submit=async e=>{e.preventDefault();setSaving(true);
-    try{const d=await api('POST','/api/memberships',{...form,patient_id:patient.id},token);if(d){toast('Membership created');onSave(d);}}
-    catch(e){toast(e.message,'error');}setSaving(false);};
+
+  useEffect(()=>{
+    api('GET','/api/membership-plans',null,token).then(d=>{
+      if(d?.length){setApiPlans(d);setSelectedPlan(d[0]);}
+    }).catch(()=>{});
+  },[token]);
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!selectedPlan){toast('Select a plan','error');return;}
+    setSaving(true);
+    const annualPrice=selectedPlan.price_annual||selectedPlan.price_monthly*12||0;
+    const monthlyPrice=selectedPlan.price_monthly||parseFloat((annualPrice/12).toFixed(2))||0;
+    try{
+      const d=await api('POST','/api/memberships',{
+        patient_id:patient.id,
+        plan_name:selectedPlan.name,
+        price_monthly:monthlyPrice,
+        price_annual:annualPrice,
+        billing_cycle:cycle,
+        start_date:startDate,
+      },token);
+      if(d){toast('Membership created');onSave(d);}
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
   return(
     <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
-      <h3 style={{fontWeight:700,marginBottom:12}}>New Membership</h3>
+      <h3 style={{fontWeight:700,marginBottom:14}}>New Membership</h3>
       <form onSubmit={submit}>
-        <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
-          {plans.map(p=>(
-            <label key={p.name} style={{padding:'10px 16px',borderRadius:10,border:`2px solid ${form.plan_name===p.name?'#0d9488':'#e7e5e4'}`,cursor:'pointer',background:form.plan_name===p.name?'#ccfbf1':'#fff'}}>
-              <input type="radio" name="plan" hidden checked={form.plan_name===p.name} onChange={()=>setForm({...form,plan_name:p.name,price_monthly:p.price})}/>
-              <div style={{fontWeight:600}}>{p.name}</div>
-              <div style={{fontSize:13,color:'#78716c'}}>${p.price}/mo</div>
-            </label>
-          ))}
+        {/* Billing cycle toggle */}
+        <div style={{marginBottom:14}}>
+          <label className="label">Billing Cycle</label>
+          <div style={{display:'flex',gap:0,border:'1.5px solid var(--border)',borderRadius:8,overflow:'hidden',width:'fit-content'}}>
+            {[['annual','Annual'],['monthly','Monthly']].map(([v,l])=>(
+              <button key={v} type="button" onClick={()=>setCycle(v)}
+                style={{padding:'6px 20px',fontSize:13,fontWeight:cycle===v?600:400,cursor:'pointer',border:'none',
+                  background:cycle===v?'var(--accent)':'var(--surface)',
+                  color:cycle===v?'#fff':'var(--text-2)',transition:'all .15s'}}>
+                {l}
+              </button>
+            ))}
+          </div>
         </div>
-        <div style={{marginBottom:12}}><label className="label">Start Date</label><input className="input" type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})}/></div>
-        <div style={{display:'flex',gap:8}}><button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:'Create Membership'}</button><button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button></div>
+
+        {/* Plan selection */}
+        <div style={{marginBottom:14}}>
+          <label className="label">Plan</label>
+          {apiPlans.length===0?<div style={{fontSize:13,color:'var(--text-3)'}}>Loading…</div>:(
+            <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:6}}>
+              {apiPlans.filter(p=>p.is_active!==false).map(p=>{
+                const annualP=p.price_annual||p.price_monthly*12||0;
+                const monthlyP=p.price_monthly||parseFloat((annualP/12).toFixed(2))||0;
+                const displayPrice=cycle==='annual'?annualP:monthlyP;
+                const isSelected=selectedPlan?.id===p.id;
+                return(
+                  <label key={p.id} style={{padding:'10px 16px',borderRadius:10,minWidth:110,textAlign:'center',
+                    border:`2px solid ${isSelected?'var(--accent)':'var(--border)'}`,
+                    cursor:'pointer',background:isSelected?'var(--accent-bg)':'var(--surface)'}}>
+                    <input type="radio" name="plan" hidden checked={isSelected} onChange={()=>setSelectedPlan(p)}/>
+                    <div style={{fontWeight:600,color:isSelected?'var(--accent)':'var(--text-1)'}}>{p.name}</div>
+                    <div style={{fontSize:16,fontWeight:800,color:isSelected?'var(--accent)':'var(--text-1)',margin:'2px 0'}}>
+                      ${displayPrice.toFixed(0)}
+                    </div>
+                    <div style={{fontSize:11,color:'var(--text-3)'}}>{cycle==='annual'?'/year':'/month'}</div>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label className="label">Start Date</label>
+          <input className="input" type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-primary" type="submit" disabled={saving||!selectedPlan}>{saving?<Spinner/>:'Create Membership'}</button>
+          <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+        </div>
       </form>
     </div>
   );
@@ -3130,8 +3200,9 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
 // ═══════════════════════════════════════════════════════════════════════════════
 function SquareMembershipModal({token,patient,onClose,onSave}){
   const toast=useToast();
-  const plans=[{name:'Basic',price:99},{name:'Standard',price:149},{name:'Premium',price:249},{name:'Concierge',price:499}];
-  const [selectedPlan,setSelectedPlan]=useState(plans[0]);
+  const [apiPlans,setApiPlans]=useState([]);
+  const [selectedPlan,setSelectedPlan]=useState(null);
+  const [cycle,setCycle]=useState('annual'); // 'annual' | 'monthly'
   const [loading,setLoading]=useState(false);
   const [step,setStep]=useState('plan'); // plan | card | done
   const [sqConfig,setSqConfig]=useState(null);
@@ -3139,11 +3210,21 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
   const containerRef=useRef(null);
 
   useEffect(()=>{
+    api('GET','/api/membership-plans',null,token).then(d=>{
+      if(d?.length){setApiPlans(d);setSelectedPlan(d[0]);}
+    }).catch(()=>{});
     api('GET','/api/square/config',null,token).then(async d=>{
       if(!d?.enabled){toast('Square not configured — add SQUARE_ACCESS_TOKEN, SQUARE_APP_ID, SQUARE_LOCATION_ID','error');return;}
       setSqConfig(d);
     });
   },[token]);
+
+  // Effective price based on selected cycle
+  const effectivePrice=selectedPlan?(
+    cycle==='annual'
+      ?(selectedPlan.price_annual||selectedPlan.price_monthly*12||0)
+      :(selectedPlan.price_monthly||selectedPlan.price_annual/12||0)
+  ):0;
 
   useEffect(()=>{
     if(step!=='card'||!sqConfig||!containerRef.current||cardRef.current) return;
@@ -3170,14 +3251,20 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
         toast((result.errors||[]).map(e=>e.message).join(', ')||'Card tokenization failed','error');
         setLoading(false); return;
       }
+      const annualPrice=selectedPlan.price_annual||selectedPlan.price_monthly*12||0;
+      const monthlyPrice=selectedPlan.price_monthly||parseFloat((annualPrice/12).toFixed(2))||0;
       const d=await api('POST','/api/square/subscription',{
-        patient_id:patient.id, plan_name:selectedPlan.name,
-        price_monthly:selectedPlan.price, source_id:result.token
+        patient_id:patient.id,
+        plan_name:selectedPlan.name,
+        price_monthly:monthlyPrice,
+        price_annual:annualPrice,
+        billing_cycle:cycle,
+        source_id:result.token,
       },token);
       if(d?.success){
         setStep('done');
         toast('Subscription activated!');
-        onSave({id:d.membership_id,plan_name:selectedPlan.name,price_monthly:selectedPlan.price,status:'active',start_date:new Date().toISOString()});
+        onSave({id:d.membership_id,plan_name:selectedPlan.name,price_monthly:monthlyPrice,price_annual:annualPrice,billing_cycle:cycle,status:'active',start_date:new Date().toISOString()});
       }
     }catch(e){toast(e.message,'error');}
     setLoading(false);
@@ -3198,27 +3285,69 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
             <form onSubmit={proceedToCard}>
               <div style={{marginBottom:14}}>
                 <label className="label">Patient</label>
-                <div style={{padding:'9px 12px',background:'#fafaf9',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+                <div style={{padding:'9px 12px',background:'var(--bg)',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
               </div>
-              <div style={{marginBottom:20}}>
-                <label className="label">Select Plan</label>
-                <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:8}}>
-                  {plans.map(p=>(
-                    <label key={p.name} style={{flex:'1 1 120px',padding:'12px 16px',borderRadius:10,border:`2px solid ${selectedPlan.name===p.name?'#006aff':'#e7e5e4'}`,cursor:'pointer',background:selectedPlan.name===p.name?'#e8f0fe':'#fff',textAlign:'center'}}>
-                      <input type="radio" name="plan" hidden checked={selectedPlan.name===p.name} onChange={()=>setSelectedPlan(p)}/>
-                      <div style={{fontWeight:700,color:selectedPlan.name===p.name?'#006aff':'#1c1917'}}>{p.name}</div>
-                      <div style={{fontSize:20,fontWeight:800,color:selectedPlan.name===p.name?'#1d4ed8':'#44403c',margin:'4px 0'}}>${p.price}</div>
-                      <div style={{fontSize:11,color:'#a8a29e'}}>per month</div>
-                    </label>
+
+              {/* Billing cycle toggle */}
+              <div style={{marginBottom:16}}>
+                <label className="label">Billing Cycle</label>
+                <div style={{display:'flex',gap:0,border:'1.5px solid var(--border)',borderRadius:8,overflow:'hidden',width:'fit-content'}}>
+                  {[['annual','Annual'],['monthly','Monthly']].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>setCycle(v)}
+                      style={{padding:'7px 22px',fontSize:13,fontWeight:cycle===v?600:400,cursor:'pointer',border:'none',
+                        background:cycle===v?'var(--accent)':'var(--surface)',
+                        color:cycle===v?'#fff':'var(--text-2)',transition:'all .15s'}}>
+                      {l}
+                      {v==='annual'&&selectedPlan?.price_annual>0&&selectedPlan?.price_monthly>0&&(
+                        <span style={{marginLeft:6,fontSize:11,
+                          color:cycle==='annual'?'rgba(255,255,255,.8)':'#2d8a5e',fontWeight:600}}>
+                          Save ${((selectedPlan.price_monthly*12)-selectedPlan.price_annual).toFixed(0)}
+                        </span>
+                      )}
+                    </button>
                   ))}
                 </div>
               </div>
+
+              <div style={{marginBottom:20}}>
+                <label className="label">Select Plan</label>
+                {apiPlans.length===0&&<div style={{fontSize:13,color:'var(--text-3)',padding:'8px 0'}}>Loading plans…</div>}
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:8}}>
+                  {apiPlans.filter(p=>p.is_active!==false).map(p=>{
+                    const annualP=p.price_annual||p.price_monthly*12||0;
+                    const monthlyP=p.price_monthly||parseFloat((annualP/12).toFixed(2))||0;
+                    const displayPrice=cycle==='annual'?annualP:monthlyP;
+                    const isSelected=selectedPlan?.id===p.id;
+                    return(
+                      <label key={p.id} style={{flex:'1 1 130px',padding:'14px 16px',borderRadius:10,
+                        border:`2px solid ${isSelected?'#006aff':'var(--border)'}`,
+                        cursor:'pointer',background:isSelected?'#eff6ff':'var(--surface)',textAlign:'center'}}>
+                        <input type="radio" name="plan" hidden checked={isSelected} onChange={()=>setSelectedPlan(p)}/>
+                        {p.badge&&<div style={{fontSize:10,fontWeight:700,color:'#006aff',marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>{p.badge}</div>}
+                        <div style={{fontWeight:700,color:isSelected?'#006aff':'var(--text-1)',marginBottom:4}}>{p.name}</div>
+                        <div style={{fontSize:22,fontWeight:800,color:isSelected?'#1d4ed8':'var(--text-1)',lineHeight:1}}>
+                          ${displayPrice.toFixed(0)}
+                        </div>
+                        <div style={{fontSize:11,color:'var(--text-3)',marginTop:2}}>
+                          {cycle==='annual'?'per year':`per month`}
+                        </div>
+                        {cycle==='annual'&&monthlyP>0&&(
+                          <div style={{fontSize:10,color:'var(--text-3)',marginTop:3}}>
+                            (${monthlyP.toFixed(2)}/mo equiv.)
+                          </div>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div style={{padding:'12px 16px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',marginBottom:20,fontSize:13,color:'#226b49'}}>
-                ✓ Card saved on file · First month charged today · Cancel anytime · Powered by Square
+                ✓ Card saved on file · {cycle==='annual'?'Annual amount charged today':'First month charged today'} · Cancel anytime · Powered by Square
               </div>
               <div style={{display:'flex',gap:8}}>
-                <button className="btn" type="submit" style={{flex:1,background:'#006aff',color:'#fff'}}>
-                  {`Continue — $${selectedPlan.price}/mo →`}
+                <button className="btn" type="submit" style={{flex:1,background:'#006aff',color:'#fff'}} disabled={!selectedPlan}>
+                  {selectedPlan?`Continue — $${effectivePrice.toFixed(2)}/${cycle==='annual'?'yr':'mo'} →`:'Select a plan'}
                 </button>
                 <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
               </div>
@@ -4992,7 +5121,7 @@ function EnrollmentManager({token}){
       {tab==='plans'&&(
         <div>
           <div style={{marginBottom:12,fontSize:13,color:'#78716c'}}>
-            Set monthly prices and features for each membership tier. These display on the public enrollment page.
+            Set the annual price for each tier — monthly is derived automatically (annual ÷ 12). Patients choose their billing cycle at enrollment.
           </div>
           {plans.map(plan=>(
             <div key={plan.id} className="card" style={{marginBottom:12,borderLeft:`4px solid ${plan.color||'var(--sidebar)'}`}}>
@@ -5007,9 +5136,20 @@ function EnrollmentManager({token}){
                       {!plan.is_active&&<span style={{fontSize:11,color:'#a8a29e'}}>Inactive</span>}
                     </div>
                     <div style={{fontSize:13,color:'#78716c',marginBottom:4}}>{plan.description}</div>
-                    <div style={{fontSize:15,fontWeight:700,color:plan.color||'var(--sidebar)',marginBottom:6}}>
-                      {plan.price_monthly>0?`$${plan.price_monthly}/month`:'Price not set'}
-                      {plan.enrollment_fee>0&&<span style={{fontSize:12,fontWeight:400,color:'#78716c',marginLeft:8}}> + ${plan.enrollment_fee} enrollment fee</span>}
+                    <div style={{marginBottom:6}}>
+                      {plan.price_annual>0?(
+                        <span style={{fontSize:18,fontWeight:800,color:plan.color||'var(--sidebar)'}}>
+                          ${plan.price_annual.toFixed(0)}<span style={{fontSize:13,fontWeight:400,color:'var(--text-3)'}}>/year</span>
+                        </span>
+                      ):plan.price_monthly>0?(
+                        <span style={{fontSize:18,fontWeight:800,color:plan.color||'var(--sidebar)'}}>
+                          ${(plan.price_monthly*12).toFixed(0)}<span style={{fontSize:13,fontWeight:400,color:'var(--text-3)'}}>/year</span>
+                        </span>
+                      ):<span style={{fontSize:14,color:'var(--text-3)'}}>Price not set</span>}
+                      {plan.price_monthly>0&&(
+                        <span style={{fontSize:12,color:'var(--text-3)',marginLeft:10}}>or ${plan.price_monthly.toFixed(2)}/mo</span>
+                      )}
+                      {plan.enrollment_fee>0&&<span style={{fontSize:12,color:'var(--text-3)',marginLeft:10}}>+ ${plan.enrollment_fee} enrollment fee</span>}
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                       {(plan.features||[]).slice(0,4).map((f,i)=>(
@@ -5081,7 +5221,11 @@ function BillingUpcoming({token}){
           <tr key={r.id} style={{borderBottom:'1px solid #f1f5f9'}}>
             <td style={{padding:'7px 10px'}}>{r.patient_name||'—'}</td>
             <td style={{padding:'7px 10px'}}>{r.plan_name}</td>
-            <td style={{padding:'7px 10px'}}>${r.price_monthly?.toFixed(2)}/mo</td>
+            <td style={{padding:'7px 10px'}}>
+              {r.billing_cycle==='annual'
+                ?`$${(r.price_annual||r.price_monthly*12||0).toFixed(2)}/yr`
+                :`$${r.price_monthly?.toFixed(2)}/mo`}
+            </td>
             <td style={{padding:'7px 10px'}}>{r.next_billing_date?.slice(0,10)}</td>
             <td style={{padding:'7px 10px',textTransform:'capitalize'}}>{r.payment_provider||'square'}</td>
             <td style={{padding:'7px 10px'}}>
@@ -5098,22 +5242,33 @@ function BillingUpcoming({token}){
 
 function PlanEditor({plan,onChange,onSave,onCancel}){
   const setField=(k,v)=>onChange(prev=>({...prev,[k]:v}));
+  // When annual price changes, auto-derive monthly = annual/12
+  const setAnnual=v=>{
+    const annual=parseFloat(v)||0;
+    onChange(prev=>({...prev,price_annual:annual,price_monthly:annual>0?parseFloat((annual/12).toFixed(2)):prev.price_monthly}));
+  };
   return(
     <div>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12,marginBottom:12}}>
         <div>
-          <label className="label">Monthly Price ($)</label>
-          <input className="input" type="number" step="0.01" min="0" value={plan.price_monthly||''}
-            onChange={e=>setField('price_monthly',parseFloat(e.target.value)||0)}/>
+          <label className="label">Annual Price ($) <span style={{fontWeight:400,color:'var(--text-3)'}}>— primary</span></label>
+          <input className="input" type="number" step="0.01" min="0" value={plan.price_annual||''}
+            placeholder="e.g. 1188"
+            onChange={e=>setAnnual(e.target.value)}/>
+          {plan.price_annual>0&&(
+            <div style={{fontSize:11,color:'var(--text-3)',marginTop:3}}>
+              = ${(plan.price_annual/12).toFixed(2)}/mo if paid monthly
+            </div>
+          )}
         </div>
         <div>
-          <label className="label">Annual Price ($)</label>
-          <input className="input" type="number" step="0.01" min="0" value={plan.price_annual||''}
-            placeholder={plan.price_monthly?(plan.price_monthly*10).toFixed(2):''}
-            onChange={e=>setField('price_annual',parseFloat(e.target.value)||null)}/>
-          {plan.price_monthly>0&&plan.price_annual>0&&(
+          <label className="label">Monthly Price ($) <span style={{fontWeight:400,color:'var(--text-3)'}}>— override</span></label>
+          <input className="input" type="number" step="0.01" min="0" value={plan.price_monthly||''}
+            placeholder={plan.price_annual?(plan.price_annual/12).toFixed(2):''}
+            onChange={e=>setField('price_monthly',parseFloat(e.target.value)||0)}/>
+          {plan.price_annual>0&&plan.price_monthly>0&&(
             <div style={{fontSize:11,color:'#2d8a5e',marginTop:3}}>
-              Saves ${((plan.price_monthly*12)-plan.price_annual).toFixed(2)}/yr vs monthly
+              Annual saves ${((plan.price_monthly*12)-plan.price_annual).toFixed(2)}/yr
             </div>
           )}
         </div>
