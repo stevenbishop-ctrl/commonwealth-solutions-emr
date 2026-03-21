@@ -1503,6 +1503,31 @@ def transmit_lab_order(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
+    # ── ABN gate: Medicare patients require a signed ABN before transmission ──
+    is_medicare = "medicare" in (patient.insurance_name or "").lower()
+    if is_medicare:
+        signed_abn = db.query(models.AdvanceBeneficiaryNotice).filter(
+            models.AdvanceBeneficiaryNotice.lab_order_id == order_id,
+            models.AdvanceBeneficiaryNotice.status == "signed",
+            models.AdvanceBeneficiaryNotice.patient_decision.in_(["OPTION_1", "OPTION_2"]),
+        ).first()
+        if not signed_abn:
+            raise HTTPException(
+                status_code=422,
+                detail="ABN_REQUIRED: A signed Advance Beneficiary Notice is required before transmitting a lab order for a Medicare patient."
+            )
+        # OPTION_3 means patient declined — order should not be transmitted
+        declined_abn = db.query(models.AdvanceBeneficiaryNotice).filter(
+            models.AdvanceBeneficiaryNotice.lab_order_id == order_id,
+            models.AdvanceBeneficiaryNotice.status == "signed",
+            models.AdvanceBeneficiaryNotice.patient_decision == "OPTION_3",
+        ).first()
+        if declined_abn:
+            raise HTTPException(
+                status_code=422,
+                detail="ABN_DECLINED: Patient selected Option 3 (does not want the test). Order cannot be transmitted."
+            )
+
     token   = _get_labcorp_token()
     payload = _build_labcorp_order_payload(order, patient, provider)
 
@@ -1720,6 +1745,152 @@ async def labcorp_webhook(request: Request, db: Session = Depends(get_db)):
     db.commit()
     audit(db, None, "WEBHOOK_LAB_RESULT", "LabOrder", str(order.id), f"LabCorp accession: {lc_accession}")
     return {"received": True, "matched": True, "order_id": order.id, "observations": len(observations)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADVANCE BENEFICIARY NOTICE (ABN) — CMS-R-131
+# 42 C.F.R. § 411.408(f); required before ordering tests for Medicare patients
+# when Medicare coverage is uncertain.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _abn_dict(abn: models.AdvanceBeneficiaryNotice) -> dict:
+    return {
+        "id":               abn.id,
+        "lab_order_id":     abn.lab_order_id,
+        "patient_id":       abn.patient_id,
+        "created_by":       abn.created_by,
+        "items":            json.loads(abn.items or "[]"),
+        "reason":           abn.reason,
+        "estimated_cost":   abn.estimated_cost,
+        "patient_decision": abn.patient_decision,
+        "signed_at":        abn.signed_at.isoformat() if abn.signed_at else None,
+        "signed_by_name":   abn.signed_by_name,
+        "witness_name":     abn.witness_name,
+        "status":           abn.status,
+        "notes":            abn.notes,
+        "created_at":       abn.created_at.isoformat(),
+    }
+
+
+@app.post("/api/abns")
+def create_abn(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Create a new ABN for a Medicare patient prior to a lab order."""
+    patient_id = body.get("patient_id")
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="patient_id required")
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    abn = models.AdvanceBeneficiaryNotice(
+        lab_order_id     = body.get("lab_order_id"),
+        patient_id       = patient_id,
+        created_by       = current_user.id,
+        items            = json.dumps(body.get("items", [])),
+        reason           = body.get("reason", "Medicare may not cover this test for the stated diagnosis"),
+        estimated_cost   = float(body.get("estimated_cost", 0)),
+        status           = "pending",
+    )
+    db.add(abn)
+    db.commit()
+    db.refresh(abn)
+    audit(db, current_user.id, "CREATE_ABN", "ABN", str(abn.id),
+          f"Patient {patient_id}; items: {body.get('items', [])}")
+    return _abn_dict(abn)
+
+
+@app.get("/api/abns")
+def list_abns(
+    patient_id: Optional[int] = None,
+    lab_order_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """List ABNs, optionally filtered by patient or lab order."""
+    q = db.query(models.AdvanceBeneficiaryNotice)
+    if patient_id:
+        q = q.filter(models.AdvanceBeneficiaryNotice.patient_id == patient_id)
+    if lab_order_id:
+        q = q.filter(models.AdvanceBeneficiaryNotice.lab_order_id == lab_order_id)
+    return [_abn_dict(a) for a in q.order_by(models.AdvanceBeneficiaryNotice.created_at.desc()).all()]
+
+
+@app.get("/api/abns/{abn_id}")
+def get_abn(
+    abn_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    abn = db.query(models.AdvanceBeneficiaryNotice).filter(
+        models.AdvanceBeneficiaryNotice.id == abn_id).first()
+    if not abn:
+        raise HTTPException(status_code=404, detail="ABN not found")
+    return _abn_dict(abn)
+
+
+@app.post("/api/abns/{abn_id}/sign")
+def sign_abn(
+    abn_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Record the patient's signed decision.
+    body: { patient_decision, signed_by_name, witness_name, lab_order_id (optional) }
+    """
+    abn = db.query(models.AdvanceBeneficiaryNotice).filter(
+        models.AdvanceBeneficiaryNotice.id == abn_id).first()
+    if not abn:
+        raise HTTPException(status_code=404, detail="ABN not found")
+
+    decision = body.get("patient_decision", "")
+    if decision not in ("OPTION_1", "OPTION_2", "OPTION_3"):
+        raise HTTPException(status_code=400,
+            detail="patient_decision must be OPTION_1, OPTION_2, or OPTION_3")
+
+    signed_name = body.get("signed_by_name", "").strip()
+    if not signed_name:
+        raise HTTPException(status_code=400, detail="signed_by_name required")
+
+    abn.patient_decision = decision
+    abn.signed_by_name   = signed_name
+    abn.witness_name     = body.get("witness_name", "")
+    abn.signed_at        = datetime.utcnow()
+    abn.status           = "signed"
+    abn.updated_at       = datetime.utcnow()
+
+    # Link to lab order if provided
+    if body.get("lab_order_id"):
+        abn.lab_order_id = int(body["lab_order_id"])
+
+    db.commit()
+    db.refresh(abn)
+    audit(db, current_user.id, "SIGN_ABN", "ABN", str(abn.id),
+          f"Decision: {decision}; signed by: {signed_name}")
+    return _abn_dict(abn)
+
+
+@app.delete("/api/abns/{abn_id}")
+def void_abn(
+    abn_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Void an ABN (e.g. order was cancelled)."""
+    abn = db.query(models.AdvanceBeneficiaryNotice).filter(
+        models.AdvanceBeneficiaryNotice.id == abn_id).first()
+    if not abn:
+        raise HTTPException(status_code=404, detail="ABN not found")
+    abn.status = "voided"
+    abn.updated_at = datetime.utcnow()
+    db.commit()
+    audit(db, current_user.id, "VOID_ABN", "ABN", str(abn.id), "ABN voided")
+    return {"voided": True}
 
 
 @app.get("/api/labcorp/tests")
@@ -4353,6 +4524,24 @@ def _migrate_add_billing_columns(db: Session):
             recorded_by INTEGER REFERENCES users(id),
             notes TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT NOW()
+        )""",
+        # ABN (Advance Beneficiary Notice) — CMS-R-131
+        """CREATE TABLE IF NOT EXISTS abns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lab_order_id INTEGER REFERENCES lab_orders(id),
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            items TEXT DEFAULT '[]',
+            reason TEXT DEFAULT '',
+            estimated_cost REAL DEFAULT 0,
+            patient_decision VARCHAR,
+            signed_at TIMESTAMP,
+            signed_by_name VARCHAR DEFAULT '',
+            witness_name VARCHAR DEFAULT '',
+            status VARCHAR DEFAULT 'pending',
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
     ]
     from sqlalchemy import text

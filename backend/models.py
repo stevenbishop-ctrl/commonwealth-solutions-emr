@@ -446,6 +446,43 @@ class PatientConsent(Base):
     created_at       = Column(DateTime, default=datetime.utcnow)
 
 
+class AdvanceBeneficiaryNotice(Base):
+    """
+    Advance Beneficiary Notice of Non-coverage (ABN) — CMS Form CMS-R-131.
+    Required before ordering tests for Medicare patients when coverage is uncertain.
+    42 C.F.R. § 411.408(f); CMS Pub. 100-04, Ch. 30.
+    """
+    __tablename__ = "abns"
+    id               = Column(Integer, primary_key=True, index=True)
+    lab_order_id     = Column(Integer, ForeignKey("lab_orders.id"), nullable=True)
+    patient_id       = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    created_by       = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Tests listed on this ABN (JSON array of {name, code, estimated_cost})
+    items            = Column(Text, default="[]")
+    # Reason coverage may be denied (free text, e.g. "Diagnosis may not support medical necessity")
+    reason           = Column(Text, default="")
+    # Estimated cost the patient may owe
+    estimated_cost   = Column(Float, default=0.0)
+
+    # Patient decision — CMS option boxes:
+    #   OPTION_1 = "I want the item; bill Medicare and I'll pay if denied"
+    #   OPTION_2 = "I want the item but do NOT want Medicare billed; I will pay"
+    #   OPTION_3 = "I do NOT want the item"
+    patient_decision = Column(String, nullable=True)   # OPTION_1 | OPTION_2 | OPTION_3
+
+    # Signature block
+    signed_at        = Column(DateTime, nullable=True)
+    signed_by_name   = Column(String, default="")       # patient typed full name
+    witness_name     = Column(String, default="")
+
+    # Lifecycle
+    status           = Column(String, default="pending")  # pending | signed | declined | voided
+    notes            = Column(Text, default="")
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    updated_at       = Column(DateTime, default=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)

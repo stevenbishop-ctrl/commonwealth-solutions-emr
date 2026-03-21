@@ -855,8 +855,20 @@ function PatientChart({token,patient,onBack,user}){
     setPdfLoading(null);
   };
 
+  const [abnModalOrder,setAbnModalOrder]=useState(null);
+
   const transmitLab=async(id)=>{
-    const r=await api('POST',`/api/lab-orders/${id}/transmit`,{},token).catch(e=>{toast(e.message,'error');return null;});
+    const r=await api('POST',`/api/lab-orders/${id}/transmit`,{},token).catch(e=>{
+      if(e.message&&e.message.startsWith('ABN_REQUIRED')){
+        // Pull the order and open the ABN modal
+        const order=labs.find(l=>l.id===id);
+        if(order) setAbnModalOrder(order);
+        else toast('An ABN must be signed before transmitting to LabCorp','error');
+      } else {
+        toast(e.message,'error');
+      }
+      return null;
+    });
     if(r){
       toast('Lab order transmitted to LabCorp');
       setLabs(labs.map(l=>l.id===id?{...l,status:'transmitted',labcorp_order_id:r.labcorp_order_id||l.labcorp_order_id}:l));
@@ -1125,8 +1137,11 @@ function PatientChart({token,patient,onBack,user}){
                     </div>
                     {l.clinical_indication&&<div style={{fontSize:12,color:'#a8a29e',marginTop:2}}>{l.clinical_indication}</div>}
                   </div>
-                  <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
+                  <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0,flexWrap:'wrap',justifyContent:'flex-end'}}>
                     {statusBadge(l.status)}
+                    {/(medicare)/i.test(patient.insurance_name||'')&&l.status==='pending'&&(
+                      <span className="badge badge-yellow" title="Advance Beneficiary Notice required">ABN Req'd</span>
+                    )}
                     {l.status==='pending'&&(
                       <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>transmitLab(l.id)}>
                         <Icon name="send" size={13}/>Send to LabCorp
@@ -1203,6 +1218,19 @@ function PatientChart({token,patient,onBack,user}){
           })}
           {showLabForm&&<LabOrderForm token={token} patient={patient} onSave={o=>{setLabs([o,...labs]);setShowLabForm(false);}} onCancel={()=>setShowLabForm(false)}/>}
         </div>
+      )}
+
+      {/* ABN modal — triggered when transmit blocked for Medicare patient */}
+      {abnModalOrder&&(
+        <AbnModal
+          token={token} patient={patient} order={abnModalOrder}
+          onSigned={abn=>{
+            setAbnModalOrder(null);
+            // Now retry transmit
+            transmitLab(abnModalOrder.id);
+          }}
+          onCancel={()=>setAbnModalOrder(null)}
+        />
       )}
 
       {/* IMAGING TAB */}
@@ -1497,11 +1525,166 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
 // ═══════════════════════════════════════════════════════════════════════════════
 // MINI FORMS
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── ABN Modal (CMS-R-131 Advance Beneficiary Notice) ────────────────────────
+function AbnModal({token, patient, order, onSigned, onCancel}){
+  const toast=useToast();
+  const isMedicare=/(medicare)/i.test(patient.insurance_name||'');
+  const [decision,setDecision]=useState('');
+  const [signedName,setSignedName]=useState('');
+  const [witness,setWitness]=useState('');
+  const [saving,setSaving]=useState(false);
+  const [abnId,setAbnId]=useState(order?.abn_id||null);
+
+  // Create the ABN record on mount if we don't have one yet
+  React.useEffect(()=>{
+    if(abnId||!order?.id) return;
+    const items=(JSON.parse(order.test_objects||order.tests||'[]')).map(t=>
+      typeof t==='string'?{name:t,code:'',estimated_cost:0}:{name:t.name,code:t.code||'',estimated_cost:0}
+    );
+    api('POST','/api/abns',{
+      patient_id:patient.id,
+      lab_order_id:order.id,
+      items,
+      reason:'Medicare coverage is uncertain for the ordered test(s) given the stated diagnosis',
+      estimated_cost:0,
+    },token).then(d=>{if(d) setAbnId(d.id);}).catch(()=>{});
+  },[order?.id]);
+
+  const submit=async()=>{
+    if(!decision){toast('Select an option','error');return;}
+    if(!signedName.trim()){toast('Patient signature (typed name) required','error');return;}
+    setSaving(true);
+    try{
+      const id=abnId||'new';
+      let abn;
+      if(abnId){
+        abn=await api('POST',`/api/abns/${abnId}/sign`,{
+          patient_decision:decision,signed_by_name:signedName,witness_name:witness,lab_order_id:order?.id
+        },token);
+      } else {
+        // Create + sign in one step (order not yet saved)
+        const items=[];
+        const created=await api('POST','/api/abns',{patient_id:patient.id,items,reason:'Medicare coverage uncertain',estimated_cost:0},token);
+        if(created) abn=await api('POST',`/api/abns/${created.id}/sign`,{patient_decision:decision,signed_by_name:signedName,witness_name:witness},token);
+      }
+      if(abn){toast('ABN signed and recorded');onSigned(abn);}
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  const optionLabel={
+    OPTION_1:'Option 1 — I want the item. Medicare may be billed and I agree to pay if Medicare denies coverage.',
+    OPTION_2:'Option 2 — I want the item but do NOT want Medicare billed. I will pay out-of-pocket.',
+    OPTION_3:'Option 3 — I do NOT want the item.',
+  };
+
+  return(
+    <div className="modal-overlay">
+      <div className="modal" style={{maxWidth:640}}>
+        <div style={{padding:'20px 24px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <h2 style={{fontSize:17,fontWeight:700,margin:0}}>Advance Beneficiary Notice of Non-Coverage</h2>
+            <p style={{fontSize:12,color:'var(--text-3)',margin:'2px 0 0'}}>CMS Form CMS-R-131 · Required for Medicare patients</p>
+          </div>
+          <span className="badge badge-yellow">Medicare Required</span>
+        </div>
+        <div style={{padding:24}}>
+          {/* Patient & provider block */}
+          <div style={{background:'var(--bg)',border:'1px solid var(--border)',borderRadius:10,padding:'12px 16px',marginBottom:16,fontSize:13}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              <div><span style={{color:'var(--text-3)'}}>Patient: </span><b>{patient.first_name} {patient.last_name}</b></div>
+              <div><span style={{color:'var(--text-3)'}}>Insurance: </span><b>{patient.insurance_name}</b></div>
+              <div><span style={{color:'var(--text-3)'}}>DOB: </span>{patient.dob}</div>
+              <div><span style={{color:'var(--text-3)'}}>Date: </span>{new Date().toLocaleDateString()}</div>
+            </div>
+          </div>
+
+          {/* Notice text */}
+          <div style={{fontSize:13,lineHeight:1.6,marginBottom:16,color:'var(--text-2)'}}>
+            <p style={{marginBottom:8}}><b>NOTE:</b> If you have other insurance, it may pay for this item. Medicare is not required to be billed first.</p>
+            <p style={{marginBottom:8}}>We expect Medicare may not pay for the item(s) listed below for one of these reasons:</p>
+            <ul style={{marginLeft:18,marginBottom:8}}>
+              <li>Medicare does not pay for this item for your condition.</li>
+              <li>Medicare does not pay for this item as frequently as proposed.</li>
+              <li>Medicare does not pay for experimental or research use items.</li>
+            </ul>
+          </div>
+
+          {/* Tests listed */}
+          {order&&(()=>{
+            const tests=JSON.parse(order.test_objects||'[]');
+            return tests.length>0&&(
+              <div style={{marginBottom:16}}>
+                <label className="label">Items That May Not Be Covered</label>
+                <div style={{border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+                  {tests.map((t,i)=>(
+                    <div key={i} style={{padding:'8px 12px',borderBottom:i<tests.length-1?'1px solid var(--border)':'none',fontSize:13,display:'flex',justifyContent:'space-between'}}>
+                      <span>{typeof t==='string'?t:t.name}</span>
+                      {typeof t!=='string'&&t.code&&<span style={{color:'var(--text-3)',fontFamily:'monospace',fontSize:12}}>{t.code}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Patient options */}
+          <div style={{marginBottom:16}}>
+            <label className="label">Patient Choice — Select One</label>
+            {['OPTION_1','OPTION_2','OPTION_3'].map(opt=>(
+              <label key={opt} onClick={()=>setDecision(opt)} style={{
+                display:'flex',alignItems:'flex-start',gap:12,padding:'12px 14px',marginBottom:8,
+                borderRadius:9,border:`2px solid ${decision===opt?'var(--accent)':'var(--border)'}`,
+                background:decision===opt?'var(--accent-bg)':'var(--surface)',cursor:'pointer',
+              }}>
+                <div style={{width:18,height:18,borderRadius:'50%',border:`2px solid ${decision===opt?'var(--accent)':'var(--border)'}`,
+                  background:decision===opt?'var(--accent)':'transparent',flexShrink:0,marginTop:1,
+                  display:'flex',alignItems:'center',justifyContent:'center'}}>
+                  {decision===opt&&<div style={{width:8,height:8,borderRadius:'50%',background:'#fff'}}/>}
+                </div>
+                <span style={{fontSize:13,color:decision===opt?'var(--text-1)':'var(--text-2)',lineHeight:1.5}}>{optionLabel[opt]}</span>
+              </label>
+            ))}
+          </div>
+
+          {/* Signature block */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+            <div>
+              <label className="label">Patient Signature (Type Full Name) *</label>
+              <input className="input" value={signedName} onChange={e=>setSignedName(e.target.value)} placeholder="Full legal name"/>
+            </div>
+            <div>
+              <label className="label">Witness Name (optional)</label>
+              <input className="input" value={witness} onChange={e=>setWitness(e.target.value)} placeholder="Staff witness"/>
+            </div>
+          </div>
+
+          <p style={{fontSize:11.5,color:'var(--text-3)',marginBottom:16}}>
+            By typing their name above, the patient acknowledges receipt of this notice and their selected option.
+            This ABN is retained in the patient record per CMS requirements.
+          </p>
+
+          <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+            <button className="btn btn-secondary" onClick={onCancel}>Cancel Order</button>
+            <button className="btn btn-primary" onClick={submit} disabled={saving||!decision||!signedName.trim()}>
+              {saving?<Spinner/>:'Record ABN & Continue'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LabOrderForm({token,patient,onSave,onCancel}){
   const toast=useToast();
   const [selectedTests,setSelectedTests]=useState([]);
   const [form,setForm]=useState({clinical_indication:'',priority:'routine',facility:'LabCorp',icd10_codes:[],notes:''});
   const [saving,setSaving]=useState(false);
+  const [showAbn,setShowAbn]=useState(false);
+  const [pendingOrder,setPendingOrder]=useState(null);
+
+  const isMedicare=/(medicare)/i.test(patient.insurance_name||'');
 
   const addTest=t=>{
     if(!selectedTests.some(s=>s.name===t.name&&s.code===t.code))
@@ -1517,19 +1700,49 @@ function LabOrderForm({token,patient,onSave,onCancel}){
       const payload={
         ...form,
         patient_id:patient.id,
-        // Store full test objects as JSON so order-submission can resolve codes
-        tests:selectedTests.map(t=>t.name),            // display name array (legacy)
-        test_objects:JSON.stringify(selectedTests),      // {name, code, category, specimen}
+        tests:selectedTests.map(t=>t.name),
+        test_objects:JSON.stringify(selectedTests),
       };
       const d=await api('POST','/api/lab-orders',payload,token);
-      if(d){toast('Lab order created');onSave(d);}
+      if(d){
+        if(isMedicare){
+          // Medicare patient — show ABN before completing
+          setPendingOrder(d);
+          setShowAbn(true);
+        } else {
+          toast('Lab order created');
+          onSave(d);
+        }
+      }
     }catch(e){toast(e.message,'error');}
     setSaving(false);
   };
 
+  if(showAbn&&pendingOrder) return(
+    <AbnModal
+      token={token} patient={patient} order={pendingOrder}
+      onSigned={abn=>{
+        setShowAbn(false);
+        toast('Lab order created — ABN signed');
+        onSave({...pendingOrder,abn_id:abn.id,abn_status:abn.status,abn_decision:abn.patient_decision});
+      }}
+      onCancel={()=>{setShowAbn(false);setPendingOrder(null);setSaving(false);}}
+    />
+  );
+
   return(
     <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
-      <h3 style={{fontWeight:700,marginBottom:12}}>New Lab Order — {patient.first_name} {patient.last_name}</h3>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:12}}>
+        <h3 style={{fontWeight:700,margin:0}}>New Lab Order — {patient.first_name} {patient.last_name}</h3>
+        {isMedicare&&(
+          <span className="badge badge-yellow" style={{fontSize:11}}>⚠ Medicare — ABN Required</span>
+        )}
+      </div>
+      {isMedicare&&(
+        <div style={{background:'#fefce8',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:13,color:'#92400e'}}>
+          This patient has Medicare coverage. An <b>Advance Beneficiary Notice (ABN)</b> will be required after creating the order. The patient must sign before the order can be transmitted to LabCorp.
+        </div>
+      )}
       <form onSubmit={submit}>
         <div style={{marginBottom:16}}>
           <label className="label" style={{marginBottom:8}}>Tests <span style={{color:'#a8a29e',fontWeight:400}}>({selectedTests.length} selected)</span></label>
@@ -1545,7 +1758,9 @@ function LabOrderForm({token,patient,onSave,onCancel}){
           <div style={{gridColumn:'span 2'}}><label className="label">Notes</label><input className="input" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})} placeholder="Additional instructions…"/></div>
         </div>
         <div style={{display:'flex',gap:8}}>
-          <button className="btn btn-primary" type="submit" disabled={saving||!selectedTests.length}>{saving?<Spinner/>:`Create Order (${selectedTests.length} test${selectedTests.length!==1?'s':''})`}</button>
+          <button className="btn btn-primary" type="submit" disabled={saving||!selectedTests.length}>
+            {saving?<Spinner/>:isMedicare?`Create Order & Sign ABN (${selectedTests.length} test${selectedTests.length!==1?'s':''})`:`Create Order (${selectedTests.length} test${selectedTests.length!==1?'s':''})`}
+          </button>
           <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
         </div>
       </form>
