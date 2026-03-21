@@ -658,7 +658,12 @@ def health_check():
     return {"status": "ok", "service": "MedFlow EMR"}
 
 # ── Auth config ───────────────────────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY", "CHANGE_ME_IN_PRODUCTION_USE_RANDOM_256BIT")
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY or SECRET_KEY == "CHANGE_ME_IN_PRODUCTION_USE_RANDOM_256BIT":
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set or is still the default value. "
+        "Generate a secure random key and set it in your environment before starting."
+    )
 ALGORITHM = "HS256"
 TOKEN_HOURS = int(os.getenv("TOKEN_EXPIRE_HOURS", "8"))
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -814,8 +819,12 @@ def login(
     user = db.query(models.User).filter(models.User.username == form.username).first()
     if not user or not verify_pw(form.password, user.password_hash):
         _record_failure(ip)
+        audit(db, None, "LOGIN_FAILED", "User", form.username, request=request,
+              details=f"username={form.username}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
+        audit(db, user.id, "LOGIN_FAILED", "User", str(user.id), request=request,
+              details="Account disabled")
         raise HTTPException(status_code=401, detail="Account disabled")
     _clear_failures(ip)
     # If MFA is enabled, return a short-lived challenge token instead of full access
@@ -5133,11 +5142,16 @@ def portal_login(
     ).first()
     if not patient or not patient.portal_password_hash:
         _record_failure(ip)
+        audit(db, None, "PORTAL_LOGIN_FAILED", "Patient", form.username, request=request,
+              details=f"email={form.username} reason=not_found")
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not verify_pw(form.password, patient.portal_password_hash):
         _record_failure(ip)
+        audit(db, None, "PORTAL_LOGIN_FAILED", "Patient", str(patient.id), request=request,
+              details=f"patient_id={patient.id} reason=bad_password")
         raise HTTPException(status_code=401, detail="Invalid email or password")
     _clear_failures(ip)
+    audit(db, None, "PORTAL_LOGIN", "Patient", str(patient.id), request=request)
     return {"access_token": make_portal_token(patient.id), "token_type": "bearer"}
 
 
