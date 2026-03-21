@@ -46,7 +46,7 @@
   .btn-sm{padding:5px 12px;font-size:12.5px;}
   .btn-primary{background:var(--accent);color:#fff;} .btn-primary:hover{background:var(--accent-h);}
   .btn-secondary{background:#f5f5f4;color:var(--text-2);} .btn-secondary:hover{background:#e7e5e4;}
-  .btn-success{background:#16a34a;color:#fff;} .btn-success:hover{background:#15803d;}
+  .btn-success{background:#2d8a5e;color:#fff;} .btn-success:hover{background:#226b49;}
   .btn-danger{background:#dc2626;color:#fff;} .btn-danger:hover{background:#b91c1c;}
   .btn-warning{background:#d97706;color:#fff;} .btn-warning:hover{background:#b45309;}
   .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text-2);} .btn-outline:hover{background:#f5f5f4;border-color:#d6d3d1;}
@@ -60,7 +60,7 @@
   /* ── Badges ── */
   .badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;letter-spacing:.02em;}
   .badge-blue{background:#ccfbf1;color:#0f766e;}
-  .badge-green{background:#dcfce7;color:#15803d;}
+  .badge-green{background:#d0f0e0;color:#226b49;}
   .badge-red{background:#fee2e2;color:#dc2626;}
   .badge-yellow{background:#fef9c3;color:#854d0e;}
   .badge-gray{background:#f5f5f4;color:var(--text-2);}
@@ -408,7 +408,7 @@ function Dashboard({token}){
 
   const cards=[
     {label:'Total Patients',key:'total_patients',icon:'users',color:'#0d9488',bg:'#ccfbf1'},
-    {label:'Notes Today',key:'notes_today',icon:'file',color:'#16a34a',bg:'#dcfce7'},
+    {label:'Notes Today',key:'notes_today',icon:'file',color:'#2d8a5e',bg:'#d0f0e0'},
     {label:'Pending Labs',key:'pending_lab_orders',icon:'lab',color:'#d97706',bg:'#fef9c3'},
     {label:'Active Memberships',key:'active_memberships',icon:'star',color:'#7c3aed',bg:'#ede9fe'},
   ];
@@ -440,7 +440,7 @@ function Dashboard({token}){
         </div>
       </div>
       <div className="card" style={{marginTop:16}}>
-        <div style={{display:'flex',alignItems:'center',gap:8,color:'#16a34a',marginBottom:8}}>
+        <div style={{display:'flex',alignItems:'center',gap:8,color:'#2d8a5e',marginBottom:8}}>
           <Icon name="shield" size={16}/><span style={{fontSize:14,fontWeight:600}}>HIPAA Compliance Active</span>
         </div>
         <p style={{fontSize:13,color:'#78716c'}}>All PHI access is automatically audit-logged with user ID, timestamp, and IP address. Token expiry: 8 hours.</p>
@@ -785,7 +785,7 @@ function NoteEditor({token,patient,note,onSave,onCancel}){
             <h4 style={{fontSize:13,fontWeight:600,color:'#57534e',marginBottom:8}}>CPT E&M Codes</h4>
             <div style={{maxHeight:200,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,padding:8}}>
               {CPT_COMMON.map(c=>(
-                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.cpt_codes.includes(c.code)?'#dcfce7':'transparent'}}>
+                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.cpt_codes.includes(c.code)?'#d0f0e0':'transparent'}}>
                   <input type="checkbox" checked={form.cpt_codes.includes(c.code)} onChange={()=>toggleCode('cpt_codes',c.code)}/>
                   <span style={{fontSize:13}}><b>{c.code}</b> — {c.desc}</span>
                 </label>
@@ -1110,13 +1110,13 @@ function PatientChart({token,patient,onBack,user}){
             const hasNewResults=l.status==='resulted'&&obs.length>0;
             const abnormals=obs.filter(o=>o.abnormal_flag&&o.abnormal_flag!=='N'&&o.abnormal_flag!=='');
             return(
-              <div key={l.id} className="card" style={{marginBottom:10,border:hasNewResults?'2px solid #16a34a':'1px solid #e2e8f0'}}>
+              <div key={l.id} className="card" style={{marginBottom:10,border:hasNewResults?'2px solid #2d8a5e':'1px solid #e2e8f0'}}>
                 {/* Order header */}
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:600,fontSize:14,marginBottom:2}}>
                       {JSON.parse(l.tests||'[]').join(', ')}
-                      {hasNewResults&&<span style={{marginLeft:8,fontSize:11,background:'#dcfce7',color:'#16a34a',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ RESULTS IN</span>}
+                      {hasNewResults&&<span style={{marginLeft:8,fontSize:11,background:'#d0f0e0',color:'#2d8a5e',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ RESULTS IN</span>}
                       {abnormals.length>0&&<span style={{marginLeft:6,fontSize:11,background:'#fee2e2',color:'#dc2626',padding:'2px 8px',borderRadius:10,fontWeight:700}}>⚠ {abnormals.length} ABNORMAL</span>}
                     </div>
                     <div style={{fontSize:12,color:'#78716c'}}>
@@ -1138,7 +1138,7 @@ function PatientChart({token,patient,onBack,user}){
                       </button>
                     )}
                     {(hasNewResults||result?.has_pdf)&&(
-                      <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px',background:'#f0fdf4',color:'#16a34a',borderColor:'#16a34a'}}
+                      <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px',background:'#f0fdf4',color:'#2d8a5e',borderColor:'#2d8a5e'}}
                         onClick={()=>setExpandedResult(isExpanded?null:l.id)}>
                         {isExpanded?'Hide Results':'View Results'}
                       </button>
@@ -1302,7 +1302,7 @@ function PatientChart({token,patient,onBack,user}){
             </div>
             <div className="card" style={{padding:'14px 18px'}}>
               <div style={{fontSize:11,color:'#a8a29e',marginBottom:2}}>MANUAL</div>
-              <div style={{fontSize:20,fontWeight:800,color:'#16a34a'}}>${payments.filter(p=>p.status==='completed'&&!['square','crypto'].includes(p.payment_method)).reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
+              <div style={{fontSize:20,fontWeight:800,color:'#2d8a5e'}}>${payments.filter(p=>p.status==='completed'&&!['square','crypto'].includes(p.payment_method)).reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
             </div>
           </div>
 
@@ -1438,7 +1438,7 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
       {source&&(
         <div style={{fontSize:11,color:'#a8a29e',marginBottom:8}}>
           {source==='live'
-            ?<span style={{color:'#16a34a'}}>● Live LabCorp catalog</span>
+            ?<span style={{color:'#2d8a5e'}}>● Live LabCorp catalog</span>
             :<span>● Local catalog · <a href="https://www.labcorp.com/tests" target="_blank" rel="noreferrer" style={{color:'#0d9488'}}>Browse full LabCorp directory ↗</a></span>
           }
         </div>
@@ -1558,7 +1558,7 @@ const IMAGING_STATUS={
   faxed:            {color:'#0d9488', bg:'#f0fdfa', label:'Faxed'},
   scheduled:        {color:'#7c3aed', bg:'#f5f3ff', label:'Scheduled'},
   completed:        {color:'#0891b2', bg:'#ecfeff', label:'Completed'},
-  results_received: {color:'#16a34a', bg:'#f0fdf4', label:'Results In'},
+  results_received: {color:'#2d8a5e', bg:'#f0fdf4', label:'Results In'},
   cancelled:        {color:'#dc2626', bg:'#fef2f2', label:'Cancelled'},
 };
 
@@ -1633,7 +1633,7 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
             </div>
           )}
           {order.scheduled_at&&<div style={{fontSize:12,color:'#7c3aed',marginTop:2}}>📅 Scheduled: {order.scheduled_at.slice(0,10)}</div>}
-          {order.results_received_at&&<div style={{fontSize:12,color:'#16a34a',marginTop:2}}>✅ Results received: {order.results_received_at.slice(0,10)}</div>}
+          {order.results_received_at&&<div style={{fontSize:12,color:'#2d8a5e',marginTop:2}}>✅ Results received: {order.results_received_at.slice(0,10)}</div>}
           {order.result_notes&&<div style={{fontSize:13,color:'#1c1917',marginTop:4,background:'#f0fdf4',borderRadius:4,padding:'6px 10px',border:'1px solid #bbf7d0'}}><b>Report:</b> {order.result_notes}</div>}
           {order.result_file_data&&(
             <button className="btn btn-outline" style={{fontSize:12,padding:'3px 10px',marginTop:4}}
@@ -1658,7 +1658,7 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
             <button className="btn btn-outline" style={{fontSize:12,padding:'4px 10px'}} onClick={()=>update({status:'completed'})}>Mark Completed</button>
           )}
           {(order.status==='completed'||order.status==='scheduled'||order.status==='faxed')&&(
-            <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px',background:'#16a34a'}} onClick={()=>setShowResults(true)}>📋 Add Results</button>
+            <button className="btn btn-primary" style={{fontSize:12,padding:'4px 10px',background:'#2d8a5e'}} onClick={()=>setShowResults(true)}>📋 Add Results</button>
           )}
           {order.status!=='cancelled'&&order.status!=='results_received'&&(
             <button className="btn btn-danger" style={{fontSize:12,padding:'4px 8px'}} onClick={()=>update({status:'cancelled'})}>✕</button>
@@ -1674,7 +1674,7 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
             <input type="file" accept="application/pdf" onChange={e=>setResultFile(e.target.files[0])} style={{fontSize:13}}/>
           </div>
           <div style={{display:'flex',gap:8}}>
-            <button className="btn btn-primary" style={{background:'#16a34a'}} onClick={submitResults} disabled={saving}>{saving?<Spinner/>:'Save Results'}</button>
+            <button className="btn btn-primary" style={{background:'#2d8a5e'}} onClick={submitResults} disabled={saving}>{saving?<Spinner/>:'Save Results'}</button>
             <button className="btn btn-secondary" onClick={()=>setShowResults(false)}>Cancel</button>
           </div>
         </div>
@@ -1999,7 +1999,7 @@ function PrescribingTab({token,patient,user}){
   const STATUS_STYLE={
     draft:     {bg:'#f5f5f4',color:'#78716c',label:'Draft'},
     signed:    {bg:'#ccfbf1',color:'#1d4ed8',label:'Signed'},
-    transmitted:{bg:'#dcfce7',color:'#15803d',label:'Transmitted'},
+    transmitted:{bg:'#d0f0e0',color:'#226b49',label:'Transmitted'},
     filled:    {bg:'#d1fae5',color:'#065f46',label:'Filled'},
     cancelled: {bg:'#fee2e2',color:'#dc2626',label:'Cancelled'},
   };
@@ -2096,7 +2096,7 @@ function PrescribingTab({token,patient,user}){
                     const WENO_STATUS={
                       sent:                  {icon:'📤',color:'#0d9488',label:'Sent via WENO'},
                       routed:                {icon:'🔀',color:'#7c3aed',label:'Routed to Pharmacy'},
-                      delivered:             {icon:'✅',color:'#16a34a',label:'Pharmacy Confirmed'},
+                      delivered:             {icon:'✅',color:'#2d8a5e',label:'Pharmacy Confirmed'},
                       error:                 {icon:'⚠️',color:'#dc2626',label:'WENO Error'},
                       cancelled_by_pharmacy: {icon:'🚫',color:'#dc2626',label:'Pharmacy Cancelled'},
                     };
@@ -2106,13 +2106,13 @@ function PrescribingTab({token,patient,user}){
                   {rx.eprescribe_platform==='telnyx-fax'&&
                     <span style={{color:'#0891b2'}}>📠 Fax</span>}
                   {rx.eprescribe_platform&&!['print/fax','telnyx-fax','weno'].includes(rx.eprescribe_platform)&&
-                    <span style={{color:'#16a34a'}}>● e-Rx via {rx.eprescribe_platform}</span>}
+                    <span style={{color:'#2d8a5e'}}>● e-Rx via {rx.eprescribe_platform}</span>}
                   {rx.fax_status&&(()=>{
                     const FAX_BADGE={
                       queued:    {bg:'#fef9c3',color:'#92400e',label:'📠 Fax Queued'},
                       processing:{bg:'#ccfbf1',color:'#0f766e',label:'📠 Processing'},
                       sending:   {bg:'#ccfbf1',color:'#0f766e',label:'📠 Sending…'},
-                      delivered: {bg:'#dcfce7',color:'#15803d',label:'📠 Fax Delivered ✓'},
+                      delivered: {bg:'#d0f0e0',color:'#226b49',label:'📠 Fax Delivered ✓'},
                       failed:    {bg:'#fee2e2',color:'#dc2626',label:'📠 Fax Failed ✗'},
                     };
                     const fb=FAX_BADGE[rx.fax_status]||{bg:'#f5f5f4',color:'#78716c',label:`📠 ${rx.fax_status}`};
@@ -2509,11 +2509,11 @@ function HistoryMedsTab({token,patient}){
     {type:'allergy',  label:'Allergies',                  color:'#d97706'},
     {type:'surgical', label:'Surgical History',           color:'#7c3aed'},
     {type:'family',   label:'Family History',             color:'#0891b2'},
-    {type:'social',   label:'Social History',             color:'#16a34a'},
+    {type:'social',   label:'Social History',             color:'#2d8a5e'},
     {type:'immunization',label:'Immunizations',           color:'#0d9488'},
   ];
 
-  const statusColors={active:'#16a34a',resolved:'#78716c',inactive:'#a8a29e'};
+  const statusColors={active:'#2d8a5e',resolved:'#78716c',inactive:'#a8a29e'};
 
   return(
     <div>
@@ -2898,7 +2898,7 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
           {step==='done'&&(
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>✅</div>
-              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Successful!</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#2d8a5e',marginBottom:8}}>Payment Successful!</div>
               <div style={{color:'#78716c',marginBottom:20}}>${parseFloat(amount).toFixed(2)} collected via Square</div>
               <button className="btn btn-success" onClick={onClose}>Done</button>
             </div>
@@ -2998,7 +2998,7 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
                   ))}
                 </div>
               </div>
-              <div style={{padding:'12px 16px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',marginBottom:20,fontSize:13,color:'#15803d'}}>
+              <div style={{padding:'12px 16px',background:'#f0fdf4',borderRadius:8,border:'1px solid #bbf7d0',marginBottom:20,fontSize:13,color:'#226b49'}}>
                 ✓ Card saved on file · First month charged today · Cancel anytime · Powered by Square
               </div>
               <div style={{display:'flex',gap:8}}>
@@ -3036,7 +3036,7 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
           {step==='done'&&(
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>🎉</div>
-              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Subscription Active!</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#2d8a5e',marginBottom:8}}>Subscription Active!</div>
               <div style={{color:'#78716c',marginBottom:4}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
               <div style={{color:'#a8a29e',fontSize:13,marginBottom:20}}>Patient charged via Square · Card saved for monthly billing</div>
               <button className="btn btn-success" onClick={onClose}>Done</button>
@@ -3195,7 +3195,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
           {step==='done'&&(
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>✅</div>
-              <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Confirmed!</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#2d8a5e',marginBottom:8}}>Payment Confirmed!</div>
               <div style={{color:'#78716c',marginBottom:4}}>
                 ${parseFloat(amount).toFixed(2)} received via Zaprite
               </div>
@@ -3292,7 +3292,7 @@ function FaxCenter({token}){
         {faxes.length===0?<div style={{textAlign:'center',color:'#a8a29e',padding:40}}>No faxes yet</div>:faxes.map(f=>(
           <div key={f.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <div style={{width:36,height:36,borderRadius:8,background:f.direction==='sent'?'#ccfbf1':'#dcfce7',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div style={{width:36,height:36,borderRadius:8,background:f.direction==='sent'?'#ccfbf1':'#d0f0e0',display:'flex',alignItems:'center',justifyContent:'center'}}>
                 <Icon name={f.direction==='sent'?'send':'fax'} size={16}/>
               </div>
               <div>
@@ -3522,7 +3522,7 @@ function Settings({token,user}){
           {secAlerts.length===0&&alertsLoaded&&(
             <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
               <span style={{fontSize:18}}>✅</span>
-              <span style={{fontSize:14,color:'#15803d',fontWeight:500}}>No security anomalies detected in the current monitoring window</span>
+              <span style={{fontSize:14,color:'#226b49',fontWeight:500}}>No security anomalies detected in the current monitoring window</span>
               <button className="btn btn-outline" style={{fontSize:12,marginLeft:'auto'}} onClick={refreshAlerts}>Refresh</button>
             </div>
           )}
@@ -3582,7 +3582,7 @@ function Settings({token,user}){
                 <h3 style={{fontWeight:600,marginBottom:2}}>Two-Factor Authentication</h3>
                 <p style={{fontSize:13,color:'#78716c'}}>
                   {mfaEnabled
-                    ?<span style={{color:'#16a34a',fontWeight:600}}>✓ Enabled — your account is protected by TOTP</span>
+                    ?<span style={{color:'#2d8a5e',fontWeight:600}}>✓ Enabled — your account is protected by TOTP</span>
                     :'Add an extra layer of security with an authenticator app.'}
                 </p>
               </div>
@@ -3645,7 +3645,7 @@ function Settings({token,user}){
               <h2 style={{fontWeight:700,fontSize:18,color:'#1c1917',margin:0}}>HIPAA Policies & Procedures</h2>
               <p style={{fontSize:13,color:'#78716c',marginTop:4}}>Six administrative safeguard policies — version 1.0 · Effective March 20, 2026 · Next review March 20, 2027</p>
             </div>
-            <span style={{fontSize:12,background:'#dcfce7',color:'#15803d',fontWeight:600,padding:'4px 10px',borderRadius:20}}>6 Policies Active</span>
+            <span style={{fontSize:12,background:'#d0f0e0',color:'#226b49',fontWeight:600,padding:'4px 10px',borderRadius:20}}>6 Policies Active</span>
           </div>
 
           {!policiesLoaded&&<div style={{textAlign:'center',padding:40,color:'#a8a29e'}}><Spinner/></div>}
@@ -3718,7 +3718,7 @@ function Settings({token,user}){
             return(
               <div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
-                  {[['Total Staff',allStaff.length,'#0d9488'],['Fully Compliant',fullyTrained,'#16a34a'],['Needs Training',allStaff.length-fullyTrained,allStaff.length-fullyTrained>0?'#dc2626':'#16a34a']].map(([l,v,c])=>(
+                  {[['Total Staff',allStaff.length,'#0d9488'],['Fully Compliant',fullyTrained,'#2d8a5e'],['Needs Training',allStaff.length-fullyTrained,allStaff.length-fullyTrained>0?'#dc2626':'#2d8a5e']].map(([l,v,c])=>(
                     <div key={l} className="card" style={{textAlign:'center',padding:'14px 10px'}}>
                       <div style={{fontSize:28,fontWeight:800,color:c}}>{v}</div>
                       <div style={{fontSize:12,color:'#78716c',marginTop:2}}>{l}</div>
@@ -3861,13 +3861,13 @@ function Settings({token,user}){
                     <div style={{position:'relative',width:72,height:72}}>
                       <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',width:72,height:72}}>
                         <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e7e5e4" strokeWidth="3"/>
-                        <circle cx="18" cy="18" r="15.9" fill="none" stroke={mfa.all_enrolled?'#16a34a':'#f59e0b'} strokeWidth="3"
+                        <circle cx="18" cy="18" r="15.9" fill="none" stroke={mfa.all_enrolled?'#2d8a5e':'#f59e0b'} strokeWidth="3"
                           strokeDasharray={`${mfa.percent} ${100-mfa.percent}`} strokeLinecap="round"/>
                       </svg>
                       <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:15,color:'#1c1917'}}>{mfa.percent}%</div>
                     </div>
                     <div>
-                      <div style={{fontSize:22,fontWeight:800,color:mfa.all_enrolled?'#16a34a':'#f59e0b'}}>{mfa.enabled_count}/{mfa.total_staff}</div>
+                      <div style={{fontSize:22,fontWeight:800,color:mfa.all_enrolled?'#2d8a5e':'#f59e0b'}}>{mfa.enabled_count}/{mfa.total_staff}</div>
                       <div style={{fontSize:12,color:'#78716c'}}>staff with MFA enabled</div>
                     </div>
                   </div>
@@ -3933,7 +3933,7 @@ function Settings({token,user}){
                   <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>📊 Login Activity (Last 7 Days)</h3>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
                     <div style={{textAlign:'center',background:'#f0fdf4',borderRadius:8,padding:16}}>
-                      <div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>{ac.successful_logins}</div>
+                      <div style={{fontSize:28,fontWeight:800,color:'#2d8a5e'}}>{ac.successful_logins}</div>
                       <div style={{fontSize:12,color:'#78716c'}}>Successful logins</div>
                     </div>
                     <div style={{textAlign:'center',background:ac.failed_logins>10?'#fee2e2':'#fafaf9',borderRadius:8,padding:16}}>
@@ -3957,7 +3957,7 @@ function Settings({token,user}){
 // SCHEDULING MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const PROVIDER_COLORS=['#0d9488','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
+const PROVIDER_COLORS=['#0d9488','#2d8a5e','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
 const HOURS=Array.from({length:13},(_,i)=>i+7); // 7am–7pm
 const PX_PER_MIN=1; // 1px per minute → 60px per hour
 const DAY_START_MIN=7*60; // 7:00 AM in minutes
@@ -4644,7 +4644,7 @@ function EnrollmentManager({token}){
   const STATUS_BADGE={
     pending:         {bg:'#fef9c3',color:'#92400e',label:'Pending'},
     payment_pending: {bg:'#ccfbf1',color:'#0f766e',label:'Awaiting Payment'},
-    active:          {bg:'#dcfce7',color:'#15803d',label:'Active'},
+    active:          {bg:'#d0f0e0',color:'#226b49',label:'Active'},
     rejected:        {bg:'#fee2e2',color:'#dc2626',label:'Rejected'},
     cancelled:       {bg:'#f5f5f4',color:'#78716c',label:'Cancelled'},
   };
@@ -4723,7 +4723,7 @@ function EnrollmentManager({token}){
                   <div style={{marginBottom:12,fontSize:13}}>
                     <b>Consents signed:</b>{' '}
                     {(Array.isArray(selected.consents)?selected.consents:[]).map(c=>(
-                      <span key={c.type} style={{marginLeft:6,padding:'2px 8px',borderRadius:10,background:'#dcfce7',color:'#15803d',fontSize:11}}>✓ {c.type}</span>
+                      <span key={c.type} style={{marginLeft:6,padding:'2px 8px',borderRadius:10,background:'#d0f0e0',color:'#226b49',fontSize:11}}>✓ {c.type}</span>
                     ))}
                   </div>
 
@@ -4816,7 +4816,7 @@ function EnrollmentManager({token}){
         <div>
           {billingResult&&(
             <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',gap:24,flexWrap:'wrap'}}>
-              <span style={{fontWeight:600,color:'#15803d'}}>Last run results:</span>
+              <span style={{fontWeight:600,color:'#226b49'}}>Last run results:</span>
               <span>✅ Charged: <b>{billingResult.succeeded}</b></span>
               <span>❌ Failed: <b style={{color:billingResult.failed>0?'#dc2626':'inherit'}}>{billingResult.failed}</b></span>
               <span>⏭ Skipped: <b>{billingResult.skipped}</b></span>
@@ -4872,7 +4872,7 @@ function BillingUpcoming({token}){
             <td style={{padding:'7px 10px'}}>
               {r.billing_status==='past_due'&&<span style={{color:'#d97706',fontWeight:600}}>Past Due</span>}
               {r.billing_status==='suspended'&&<span style={{color:'#dc2626',fontWeight:600}}>Suspended</span>}
-              {(!r.billing_status||r.billing_status==='ok')&&<span style={{color:'#16a34a'}}>OK</span>}
+              {(!r.billing_status||r.billing_status==='ok')&&<span style={{color:'#2d8a5e'}}>OK</span>}
             </td>
           </tr>
         ))}</tbody>
@@ -4897,7 +4897,7 @@ function PlanEditor({plan,onChange,onSave,onCancel}){
             placeholder={plan.price_monthly?(plan.price_monthly*10).toFixed(2):''}
             onChange={e=>setField('price_annual',parseFloat(e.target.value)||null)}/>
           {plan.price_monthly>0&&plan.price_annual>0&&(
-            <div style={{fontSize:11,color:'#16a34a',marginTop:3}}>
+            <div style={{fontSize:11,color:'#2d8a5e',marginTop:3}}>
               Saves ${((plan.price_monthly*12)-plan.price_annual).toFixed(2)}/yr vs monthly
             </div>
           )}
@@ -5192,7 +5192,7 @@ function MembershipsBrowser({token}){
     <div>
       <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:16}}>Memberships</h1>
       <div className="card" style={{marginBottom:16,display:'flex',gap:24}}>
-        <div><div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>${total.toFixed(0)}</div><div style={{fontSize:13,color:'#78716c'}}>Monthly Recurring Revenue</div></div>
+        <div><div style={{fontSize:28,fontWeight:800,color:'#2d8a5e'}}>${total.toFixed(0)}</div><div style={{fontSize:13,color:'#78716c'}}>Monthly Recurring Revenue</div></div>
         <div><div style={{fontSize:28,fontWeight:800,color:'#0d9488'}}>{memberships.filter(m=>m.status==='active').length}</div><div style={{fontSize:13,color:'#78716c'}}>Active Members</div></div>
       </div>
       {memberships.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#a8a29e'}}>No memberships</div>:memberships.map(m=>(
