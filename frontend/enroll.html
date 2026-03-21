@@ -976,6 +976,8 @@ By signing below, you acknowledge that:
                 telehealthTimestamp: '',
                 communicationSignature: '',
                 communicationTimestamp: '',
+                communicationSmsConsent: false,
+                communicationEmailConsent: false,
                 membershipSignature: '',
                 membershipTimestamp: '',
 
@@ -1123,6 +1125,9 @@ By signing below, you acknowledge that:
                     if (!formData.communicationSignature.trim() || !consentScrolled.communication) {
                         newErrors.communication = 'Must read and sign Communication consent';
                     }
+                    if (!formData.communicationSmsConsent && !formData.communicationEmailConsent) {
+                        newErrors.communicationChannels = 'Please select at least one communication channel (SMS or Email)';
+                    }
                     if (!formData.membershipSignature.trim() || !consentScrolled.membership) {
                         newErrors.membership = 'Must read and sign Membership consent';
                     }
@@ -1177,6 +1182,8 @@ By signing below, you acknowledge that:
                                     telehealth: formData.telehealthSignature,
                                     communication: formData.communicationSignature,
                                     membership: formData.membershipSignature,
+                                    sms_consent: formData.communicationSmsConsent,
+                                    email_consent: formData.communicationEmailConsent,
                                 }
                             })
                         });
@@ -1912,9 +1919,53 @@ By signing below, you acknowledge that:
                                             <div className="error-message show">{errors.communication}</div>
                                         )}
                                     </div>
+
+                                    {/* Granular channel consent checkboxes — shown after signature */}
+                                    {formData.communicationSignature && (
+                                        <div style={{marginTop:14,padding:'12px 16px',background:'#f0f9ff',borderRadius:8,border:'1px solid #bae6fd'}}>
+                                            <div style={{fontWeight:600,fontSize:13,marginBottom:10,color:'#0369a1'}}>
+                                                Select your preferred communication channels:
+                                            </div>
+                                            <label style={{display:'flex',alignItems:'flex-start',gap:10,marginBottom:10,cursor:'pointer'}}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.communicationSmsConsent}
+                                                    onChange={e=>setFormData(f=>({...f,communicationSmsConsent:e.target.checked}))}
+                                                    style={{marginTop:2,width:16,height:16,flexShrink:0}}
+                                                />
+                                                <div>
+                                                    <div style={{fontWeight:600,fontSize:13}}>💬 SMS Text Messages</div>
+                                                    <div style={{fontSize:12,color:'#64748b',marginTop:2}}>
+                                                        I consent to send and receive text messages with Valiant DPC for health communications.
+                                                        I understand SMS is not encrypted and acknowledge the risks described above.
+                                                    </div>
+                                                </div>
+                                            </label>
+                                            <label style={{display:'flex',alignItems:'flex-start',gap:10,cursor:'pointer'}}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.communicationEmailConsent}
+                                                    onChange={e=>setFormData(f=>({...f,communicationEmailConsent:e.target.checked}))}
+                                                    style={{marginTop:2,width:16,height:16,flexShrink:0}}
+                                                />
+                                                <div>
+                                                    <div style={{fontWeight:600,fontSize:13}}>✉️ Email</div>
+                                                    <div style={{fontSize:12,color:'#64748b',marginTop:2}}>
+                                                        I consent to receive health communications and appointment information via email.
+                                                        I understand email is not fully encrypted and acknowledge the risks described above.
+                                                    </div>
+                                                </div>
+                                            </label>
+                                            {errors.communicationChannels && (
+                                                <div className="error-message show" style={{marginTop:8}}>{errors.communicationChannels}</div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 {formData.communicationSignature && (
-                                    <div className="consent-status complete">✓ Signed</div>
+                                    <div className="consent-status complete">
+                                        ✓ Signed · SMS: {formData.communicationSmsConsent?'Yes':'No'} · Email: {formData.communicationEmailConsent?'Yes':'No'}
+                                    </div>
                                 )}
                                 {!formData.communicationSignature && expandedConsent === 'communication' && (
                                     <div className="consent-status">

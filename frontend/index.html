@@ -1134,6 +1134,60 @@ function PatientChart({token,patient,onBack,user}){
                   )}
                 </div>
               </div>
+
+              {/* Communication Consent */}
+              {(user.role==='admin'||user.role==='physician')&&(
+                <div className="card" style={{marginTop:16,border:'1px solid #e2e8f0'}}>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',margin:'0 0 4px'}}>Communication Consent</h3>
+                  <p style={{fontSize:12,color:'#a8a29e',marginTop:0,marginBottom:14}}>
+                    HIPAA §164.522 — Patient must consent before receiving PHI via SMS or email.
+                    Only enable after a signed consent form is on file.
+                  </p>
+                  {[
+                    {key:'sms_consent', dateKey:'sms_consent_date', label:'SMS Text Messaging',
+                     desc:'Patient may text the practice number and receive replies via SMS.',
+                     icon:'💬'},
+                    {key:'email_consent', dateKey:'email_consent_date', label:'Email Communication',
+                     desc:'Patient may receive health updates and messages via email.',
+                     icon:'✉️'},
+                  ].map(({key,dateKey,label,desc,icon})=>(
+                    <div key={key} style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',
+                      padding:'10px 0',borderTop:'1px solid #f1f5f9',gap:12}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontWeight:600,fontSize:13}}>{icon} {label}</div>
+                        <div style={{fontSize:12,color:'#78716c',marginTop:2}}>{desc}</div>
+                        {patientData[dateKey]&&(
+                          <div style={{fontSize:11,color:'#a8a29e',marginTop:2}}>
+                            Consented: {patientData[dateKey]?.slice(0,10)}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
+                        <span style={{fontSize:12,color:patientData[key]?'#15803d':'#a8a29e',fontWeight:600}}>
+                          {patientData[key]?'Granted':'Not set'}
+                        </span>
+                        <button
+                          className={`btn btn-sm ${patientData[key]?'btn-danger':'btn-primary'}`}
+                          onClick={async()=>{
+                            if(patientData[key]){
+                              if(!confirm(`Revoke ${label} consent for this patient? They will no longer receive communications via this channel.`)) return;
+                            }
+                            const payload={[key]:!patientData[key]};
+                            const r=await api('PUT',`/api/patients/${patientData.id}/communication-consent`,payload,token)
+                              .catch(e=>{toast(e.message,'error');return null;});
+                            if(r){
+                              setPatientData(d=>({...d,[key]:r[key],[dateKey]:r[dateKey+'_date']||r[dateKey]}));
+                              toast(`${label} consent ${r[key]?'granted':'revoked'}`);
+                            }
+                          }}
+                        >
+                          {patientData[key]?'Revoke':'Grant'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ):(
             <PatientForm token={token} patient={patientData}

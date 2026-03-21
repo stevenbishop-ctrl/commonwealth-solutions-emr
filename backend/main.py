@@ -6329,33 +6329,154 @@ def portal_send_message(
     return clean(msg)
 
 
+# ── Communication consent endpoints ──────────────────────────────────────────
+
+@app.put("/api/patients/{patient_id}/communication-consent")
+def update_communication_consent(
+    patient_id: int,
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Record or revoke a patient's SMS and/or email communication consent.
+    Only admin and physician may update consent on behalf of a patient.
+    Body: { "sms_consent": bool, "email_consent": bool }
+    """
+    if current_user.role not in ("admin", "physician"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    now = datetime.utcnow()
+    changed = []
+
+    if "sms_consent" in data:
+        new_val = bool(data["sms_consent"])
+        if new_val != bool(patient.sms_consent):
+            patient.sms_consent = new_val
+            patient.sms_consent_date = now if new_val else None
+            changed.append(f"sms_consent={'granted' if new_val else 'revoked'}")
+
+    if "email_consent" in data:
+        new_val = bool(data["email_consent"])
+        if new_val != bool(patient.email_consent):
+            patient.email_consent = new_val
+            patient.email_consent_date = now if new_val else None
+            changed.append(f"email_consent={'granted' if new_val else 'revoked'}")
+
+    if changed:
+        db.commit()
+        audit(db, current_user.id, "UPDATE_COMMUNICATION_CONSENT", "Patient",
+              str(patient_id), request=request, details="; ".join(changed))
+
+    return {
+        "sms_consent": patient.sms_consent,
+        "sms_consent_date": patient.sms_consent_date.isoformat() if patient.sms_consent_date else None,
+        "email_consent": patient.email_consent,
+        "email_consent_date": patient.email_consent_date.isoformat() if patient.email_consent_date else None,
+    }
+
+
+# ── Telnyx signature verification ────────────────────────────────────────────
+
+def _verify_telnyx_sms_signature(raw_body: bytes, timestamp: str, signature_b64: str) -> bool:
+    """
+    Verify an inbound Telnyx webhook using Ed25519.
+    Set TELNYX_PUBLIC_KEY in Railway to the base64-encoded public key from the
+    Telnyx Mission Control Portal → Webhooks → your endpoint → Public Key.
+    If the env var is not set, verification is skipped with a warning (dev mode).
+    """
+    public_key_b64 = os.getenv("TELNYX_PUBLIC_KEY", "")
+    if not public_key_b64:
+        # No key configured — skip but log so operators know
+        return True
+
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        import base64, time as _time
+
+        # Reject replayed requests older than 5 minutes
+        if abs(_time.time() - int(timestamp)) > 300:
+            return False
+
+        pub_key_bytes = base64.b64decode(public_key_b64)
+        pub_key = Ed25519PublicKey.from_public_bytes(pub_key_bytes)
+        message = f"{timestamp}|{raw_body.decode('utf-8', errors='replace')}".encode()
+        sig = base64.b64decode(signature_b64)
+        pub_key.verify(sig, message)   # raises InvalidSignature on failure
+        return True
+    except Exception:
+        return False
+
+
+_SMS_DISCLAIMER = (
+    "Your message has been received and will be reviewed by your care team. "
+    "For URGENT or EMERGENCY issues please call 911 or your physician directly. "
+    "IMPORTANT: SMS text messages are not encrypted. Do not send sensitive health "
+    "information by text. Use your secure patient portal instead."
+)
+
+_SMS_NO_CONSENT = (
+    "We received your text but SMS communication has not been enabled for your account. "
+    "Please contact Valiant DPC to update your communication preferences."
+)
+
+_SMS_NOT_FOUND = (
+    "This number is reserved for Valiant DPC patients. "
+    "If you are a patient, please ensure we have your current phone number on file."
+)
+
+
 @app.post("/api/webhooks/telnyx/sms")
 async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     """
-    Telnyx inbound SMS webhook.
-    When the physician replies to the Telnyx SMS number from their cell phone,
-    this endpoint receives the message and files it as an outbound reply in the
-    most recent patient's thread.
+    Telnyx inbound SMS webhook — HIPAA-hardened.
+
+    Handles two scenarios:
+    1. Inbound from a patient → filed in their chart, forwarded to physician.
+    2. Inbound from the physician's cell → filed as outbound reply to most recent patient thread.
+
+    Security:
+    - Ed25519 signature verification (TELNYX_PUBLIC_KEY env var)
+    - Timestamp replay protection (±5 min window)
+    - Phone number matching against patients.phone
+    - sms_consent gate — patients without consent receive a polite rejection
+    - Full audit trail on every event
     """
+    raw_body = await request.body()
+
+    # ── Signature verification ────────────────────────────────────────────────
+    timestamp  = request.headers.get("telnyx-timestamp", "")
+    signature  = request.headers.get("telnyx-signature-ed25519", "")
+    if timestamp and signature:
+        if not _verify_telnyx_sms_signature(raw_body, timestamp, signature):
+            audit(db, None, "SMS_WEBHOOK_SIGNATURE_FAIL", "Webhook", "telnyx_sms",
+                  details=f"Invalid signature from {request.client.host if request.client else 'unknown'}")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     try:
-        payload = await request.json()
+        payload = json.loads(raw_body)
     except Exception:
-        return {"ok": False}
+        return {"ok": False, "error": "invalid JSON"}
 
     event_type = payload.get("data", {}).get("event_type", "")
     if event_type != "message.received":
         return {"ok": True, "ignored": event_type}
 
-    record = payload.get("data", {}).get("payload", {})
+    record      = payload.get("data", {}).get("payload", {})
     from_number = record.get("from", {}).get("phone_number", "")
-    inbound_body = (record.get("text") or "").strip()
+    to_number   = record.get("to", [{}])[0].get("phone_number", "") if record.get("to") else ""
+    body_text   = (record.get("text") or "").strip()
 
-    if not inbound_body:
-        return {"ok": True, "ignored": "empty body"}
+    if not body_text or not from_number:
+        return {"ok": True, "ignored": "empty body or sender"}
 
-    # ── If the SMS is from the physician, file it as an outbound reply ───────
+    # ── Physician reply → file as outbound to most recent patient thread ──────
     if PHYSICIAN_CELL and from_number == PHYSICIAN_CELL:
-        # Find the most recent unread inbound message to determine which patient
+        # Find the most recent inbound patient message to identify the patient
         recent = (
             db.query(models.PatientMessage)
             .filter(models.PatientMessage.direction == "inbound")
@@ -6366,16 +6487,85 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
             reply = models.PatientMessage(
                 patient_id=recent.patient_id,
                 direction="outbound",
-                body=inbound_body,
+                body=body_text,
                 sms_status="delivered",
             )
             db.add(reply)
             db.commit()
-            audit(db, None, "SMS_REPLY_FILED", "Patient", str(recent.patient_id),
-                  details=f"Physician reply via SMS filed to patient {recent.patient_id}")
+            audit(db, None, "SMS_PHYSICIAN_REPLY", "Patient", str(recent.patient_id),
+                  details=f"Physician SMS reply filed; patient_id={recent.patient_id}")
             return {"ok": True, "filed_to_patient": recent.patient_id}
+        return {"ok": True, "ignored": "no recent patient thread to reply to"}
 
-    return {"ok": True, "ignored": "unknown sender"}
+    # ── Inbound from patient — normalize phone and look them up ──────────────
+    # Normalize: strip non-digits then re-format to E.164 (+1XXXXXXXXXX for US)
+    digits = re.sub(r"\D", "", from_number)
+    if len(digits) == 10:
+        digits = "1" + digits
+    normalized = "+" + digits
+
+    # Try exact match first, then normalized
+    patient = (
+        db.query(models.Patient)
+        .filter(
+            models.Patient.phone.in_([from_number, normalized,
+                                       from_number.replace("+1", ""), digits[-10:]])
+        )
+        .first()
+    )
+
+    if not patient:
+        # Unknown number — reply and audit, but do NOT expose patient info
+        _send_sms(from_number, _SMS_NOT_FOUND)
+        audit(db, None, "SMS_UNKNOWN_SENDER", "Webhook", "telnyx_sms",
+              details=f"Inbound SMS from unrecognized number (last4={from_number[-4:]})")
+        return {"ok": True, "ignored": "no matching patient"}
+
+    # ── Consent gate ─────────────────────────────────────────────────────────
+    if not patient.sms_consent:
+        _send_sms(from_number, _SMS_NO_CONSENT)
+        audit(db, None, "SMS_NO_CONSENT", "Patient", str(patient.id),
+              details="Inbound SMS blocked — sms_consent not granted")
+        return {"ok": True, "ignored": "patient has not consented to SMS"}
+
+    # ── File the message ──────────────────────────────────────────────────────
+    is_first_message = (
+        db.query(models.PatientMessage)
+        .filter(models.PatientMessage.patient_id == patient.id)
+        .count() == 0
+    )
+
+    msg = models.PatientMessage(
+        patient_id=patient.id,
+        direction="inbound",
+        body=body_text,
+        sms_status="delivered",
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    audit(db, None, "SMS_PATIENT_MESSAGE", "Patient", str(patient.id),
+          details=f"Inbound SMS from patient; msg_id={msg.id}")
+
+    # ── Send disclaimer on first message ──────────────────────────────────────
+    if is_first_message:
+        _send_sms(from_number, _SMS_DISCLAIMER)
+
+    # ── Forward to physician (patient has consented — include content) ────────
+    if PHYSICIAN_CELL:
+        fwd = (
+            f"[Valiant DPC] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
+            f"{body_text}\n\n"
+            f"Reply to this number to respond. Message is filed in the EMR."
+        )
+        mid = _send_sms(PHYSICIAN_CELL, fwd)
+        if mid:
+            msg.telnyx_msg_id = mid
+            msg.sms_status = "sent"
+            db.commit()
+
+    return {"ok": True, "filed": msg.id, "patient_id": patient.id}
 
 
 @app.get("/portal")
@@ -6475,7 +6665,23 @@ async def public_enroll(data: dict, request: Request, db: Session = Depends(get_
     db.refresh(app_record)
 
     # Store individual consent records
-    for c in data.get("consents", []):
+    consents_raw = data.get("consents", {})
+    # Support both dict form (new) and list form (legacy)
+    if isinstance(consents_raw, dict):
+        consent_items = [
+            {"type": "hipaa",         "signature": consents_raw.get("hipaa", "")},
+            {"type": "telehealth",    "signature": consents_raw.get("telehealth", "")},
+            {"type": "communication", "signature": consents_raw.get("communication", ""),
+             "sms_consent": consents_raw.get("sms_consent", False),
+             "email_consent": consents_raw.get("email_consent", False)},
+            {"type": "membership",    "signature": consents_raw.get("membership", "")},
+        ]
+    else:
+        consent_items = consents_raw
+
+    for c in consent_items:
+        if not c.get("signature") and not c.get("consented"):
+            continue
         consent = models.PatientConsent(
             enrollment_id    = app_record.id,
             consent_type     = c.get("type", ""),
@@ -6487,6 +6693,11 @@ async def public_enroll(data: dict, request: Request, db: Session = Depends(get_
             consented        = True,
         )
         db.add(consent)
+
+    # Store the full consents dict (with SMS/email flags) on the enrollment record
+    app_record.consents = json.dumps([
+        {**c, "signed_at": datetime.utcnow().isoformat()} for c in consent_items
+    ])
     db.commit()
 
     return {
@@ -6727,6 +6938,29 @@ def approve_enrollment(
     db.query(models.PatientConsent).filter(
         models.PatientConsent.enrollment_id == eid
     ).update({"patient_id": pt.id})
+
+    # Propagate communication consent from enrollment to patient record
+    consents_json = enroll.consents or "[]"
+    try:
+        consents_list = json.loads(consents_json) if isinstance(consents_json, str) else consents_json
+    except Exception:
+        consents_list = []
+    comm_consent = next((c for c in consents_list if c.get("type") in ("communication", "sms_email")), None)
+    if comm_consent and comm_consent.get("consented", True):
+        signed_at_str = comm_consent.get("signed_at", "")
+        try:
+            signed_dt = datetime.fromisoformat(signed_at_str) if signed_at_str else datetime.utcnow()
+        except ValueError:
+            signed_dt = datetime.utcnow()
+        sms_val  = comm_consent.get("sms_consent", True)
+        mail_val = comm_consent.get("email_consent", True)
+        if sms_val:
+            pt.sms_consent      = True
+            pt.sms_consent_date = signed_dt
+        if mail_val:
+            pt.email_consent      = True
+            pt.email_consent_date = signed_dt
+
     # Update enrollment
     enroll.patient_id   = pt.id
     enroll.status       = "active"

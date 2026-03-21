@@ -18,6 +18,10 @@ Base.metadata.create_all(bind=engine)
 _migrations = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS sms_consent BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS sms_consent_date TIMESTAMP",
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS email_consent BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS email_consent_date TIMESTAMP",
     # patient_messages table — created by Base.metadata.create_all above if new DB,
     # but existing DBs need these explicit statements to be safe
     """CREATE TABLE IF NOT EXISTS patient_messages (

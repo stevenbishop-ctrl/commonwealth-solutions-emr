@@ -47,6 +47,11 @@ class Patient(Base):
     portal_email = Column(String, default="")
     portal_password_hash = Column(String, default="")
     portal_active = Column(Boolean, default=False)
+    # Communication consent (HIPAA §164.522; state law)
+    sms_consent       = Column(Boolean, default=False)   # Patient consented to SMS PHI communication
+    sms_consent_date  = Column(DateTime, nullable=True)  # Date/time consent was recorded
+    email_consent     = Column(Boolean, default=False)   # Patient consented to email communication
+    email_consent_date= Column(DateTime, nullable=True)
 
 
 class ClinicalNote(Base):
