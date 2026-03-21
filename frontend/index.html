@@ -178,6 +178,8 @@ const Icon=({name,size=18,cls=''})=>{
     calendar:<><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
     clipboard:<><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></>,
     pill:<><path d="M10.5 3.5a6 6 0 0 1 8.485 8.485l-3 3-5.485-5.485 3-3z"/><path d="m3.5 10.5 5.5 5.5"/><path d="M8.5 13.5 13 9"/></>,
+    skin:<><circle cx="12" cy="12" r="3"/><path d="M3 9a9 9 0 0 1 9-6 9 9 0 0 1 6.35 2.65"/><path d="M21 15a9 9 0 0 1-9 6 9 9 0 0 1-6.35-2.65"/><path d="m15 9 2-2"/><path d="m9 15-2 2"/></>,
+    camera:<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></>,
   };
   return(
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cls}>
@@ -918,7 +920,7 @@ function PatientChart({token,patient,onBack,user}){
     />
   );
 
-  const tabs=[['info','Demographics','users'],['history','History & Meds','clipboard'],['rx','Prescriptions','pill'],['notes','Notes','file'],['labs','Labs','lab'],['imaging','Imaging','xray'],['fax','Fax','fax'],['memberships','Memberships','star'],['payments','Payments','payment']];
+  const tabs=[['info','Demographics','users'],['history','History & Meds','clipboard'],['rx','Prescriptions','pill'],['notes','Notes','file'],['labs','Labs','lab'],['imaging','Imaging','xray'],['skin','Skin','skin'],['fax','Fax','fax'],['memberships','Memberships','star'],['payments','Payments','payment']];
 
   const statusBadge=(s)=>{
     const map={draft:'badge-gray',signed:'badge-green',pending:'badge-yellow',transmitted:'badge-blue',sent:'badge-blue',active:'badge-green',cancelled:'badge-red',completed:'badge-green',failed:'badge-red',routine:'badge-gray',stat:'badge-red'};
@@ -1245,6 +1247,9 @@ function PatientChart({token,patient,onBack,user}){
           {showImagingForm&&<ImagingOrderForm token={token} patient={patient} onSave={o=>{setImaging([o,...imaging]);setShowImagingForm(false);}} onCancel={()=>setShowImagingForm(false)}/>}
         </div>
       )}
+
+      {/* SKIN LESIONS TAB */}
+      {tab==='skin'&&<SkinLesionsTab token={token} patient={patient} user={user}/>}
 
       {/* FAX TAB */}
       {tab==='fax'&&(
@@ -2066,6 +2071,449 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SKIN LESION TRACKING MODULE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const URGENCY_CONFIG={
+  'routine':              {color:'#2d8a5e', bg:'#d0f0e0', label:'Routine'},
+  'follow-up-3-months':   {color:'#d97706', bg:'#fef9c3', label:'Follow-up 3 mo'},
+  'follow-up-6-weeks':    {color:'#d97706', bg:'#fde68a', label:'Follow-up 6 wk'},
+  'urgent-referral':      {color:'#dc2626', bg:'#fee2e2', label:'Urgent Referral'},
+};
+
+const LESION_STATUS_CONFIG={
+  monitoring: {color:'#0d9488', bg:'#ccfbf1', label:'Monitoring'},
+  resolved:   {color:'#2d8a5e', bg:'#d0f0e0', label:'Resolved'},
+  referred:   {color:'#d97706', bg:'#fef9c3', label:'Referred'},
+  excised:    {color:'#57534e', bg:'#f5f5f4', label:'Excised'},
+};
+
+function SkinLesionsTab({token, patient, user}){
+  const toast=useToast();
+  const [lesions,setLesions]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [selectedLesion,setSelectedLesion]=useState(null);
+  const [showAddLesion,setShowAddLesion]=useState(false);
+  const [editLesion,setEditLesion]=useState(null);
+
+  const isPhysician=user.role==='admin'||user.role==='physician';
+
+  const loadLesions=useCallback(async()=>{
+    setLoading(true);
+    const d=await api('GET',`/api/skin-lesions?patient_id=${patient.id}`,null,token);
+    if(d) setLesions(d);
+    setLoading(false);
+  },[patient.id,token]);
+
+  useEffect(()=>{loadLesions();},[loadLesions]);
+
+  if(loading) return <div style={{textAlign:'center',padding:48}}><Spinner/></div>;
+
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+        <div>
+          <h2 style={{fontSize:16,fontWeight:700,margin:0}}>Skin Lesion Monitoring</h2>
+          <p style={{fontSize:12,color:'var(--text-3)',margin:'2px 0 0'}}>Serial photography with AI-assisted ABCDE analysis</p>
+        </div>
+        {isPhysician&&(
+          <button className="btn btn-primary" onClick={()=>setShowAddLesion(true)}>
+            <Icon name="plus" size={15}/>Track New Lesion
+          </button>
+        )}
+      </div>
+
+      {showAddLesion&&(
+        <LesionForm token={token} patient={patient} user={user}
+          onSave={l=>{setLesions([l,...lesions]);setShowAddLesion(false);setSelectedLesion(l);}}
+          onCancel={()=>setShowAddLesion(false)}/>
+      )}
+      {editLesion&&(
+        <LesionForm token={token} patient={patient} user={user} lesion={editLesion}
+          onSave={updated=>{setLesions(lesions.map(l=>l.id===updated.id?updated:l));setEditLesion(null);setSelectedLesion(updated);}}
+          onCancel={()=>setEditLesion(null)}/>
+      )}
+
+      {lesions.length===0&&!showAddLesion?(
+        <div className="card" style={{textAlign:'center',padding:48}}>
+          <div style={{fontSize:32,marginBottom:12}}>🔬</div>
+          <div style={{fontWeight:600,color:'var(--text-2)',marginBottom:6}}>No lesions being tracked</div>
+          <div style={{fontSize:13,color:'var(--text-3)',marginBottom:16}}>Add a lesion to begin serial photographic monitoring with AI-assisted ABCDE analysis.</div>
+          {isPhysician&&<button className="btn btn-primary" onClick={()=>setShowAddLesion(true)}><Icon name="plus" size={15}/>Track New Lesion</button>}
+        </div>
+      ):(
+        <div style={{display:'grid',gridTemplateColumns:'280px 1fr',gap:16,alignItems:'start'}}>
+          {/* Lesion list */}
+          <div>
+            {lesions.map(l=>{
+              const sc=LESION_STATUS_CONFIG[l.status]||LESION_STATUS_CONFIG.monitoring;
+              const uc=l.latest_urgency?URGENCY_CONFIG[l.latest_urgency]:null;
+              const isSelected=selectedLesion?.id===l.id;
+              return(
+                <div key={l.id} onClick={()=>setSelectedLesion(l)}
+                  className="card" style={{
+                    marginBottom:10,padding:'12px 14px',cursor:'pointer',
+                    border:`2px solid ${isSelected?'var(--accent)':'var(--border)'}`,
+                    background:isSelected?'var(--accent-bg)':'var(--surface)',
+                  }}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,marginBottom:6}}>
+                    <div style={{fontWeight:600,fontSize:13,color:'var(--text-1)',lineHeight:1.3}}>{l.name}</div>
+                    <span style={{fontSize:10,padding:'2px 7px',borderRadius:10,background:sc.bg,color:sc.color,fontWeight:600,flexShrink:0}}>{sc.label}</span>
+                  </div>
+                  {l.body_location&&<div style={{fontSize:12,color:'var(--text-3)',marginBottom:4}}>📍 {l.body_location}</div>}
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',fontSize:11,color:'var(--text-4)'}}>
+                    <span>{l.image_count||0} photo{l.image_count!==1?'s':''}</span>
+                    {l.latest_taken_at&&<span>{l.latest_taken_at}</span>}
+                  </div>
+                  {uc&&(
+                    <div style={{marginTop:6,fontSize:11,fontWeight:600,color:uc.color}}>
+                      ● {uc.label}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Lesion detail */}
+          <div>
+            {selectedLesion?(
+              <LesionDetail
+                key={selectedLesion.id}
+                token={token} patient={patient} user={user}
+                lesion={lesions.find(l=>l.id===selectedLesion.id)||selectedLesion}
+                onEdit={()=>setEditLesion(selectedLesion)}
+                onUpdated={updated=>setLesions(lesions.map(l=>l.id===updated.id?updated:l))}
+              />
+            ):(
+              <div className="card" style={{textAlign:'center',padding:40,color:'var(--text-3)'}}>
+                <Icon name="skin" size={32}/><br/>
+                <span style={{fontSize:13,marginTop:8,display:'block'}}>Select a lesion to view its photo timeline and analysis</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LesionForm({token, patient, user, lesion, onSave, onCancel}){
+  const toast=useToast();
+  const blank={name:'',body_location:'',description:'',first_noted:new Date().toISOString().slice(0,10),status:'monitoring',notes:''};
+  const [form,setForm]=useState(lesion?{...blank,...lesion}:blank);
+  const [saving,setSaving]=useState(false);
+  const set=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!form.name.trim()){toast('Lesion name required','error');return;}
+    setSaving(true);
+    try{
+      const d=lesion
+        ?await api('PUT',`/api/skin-lesions/${lesion.id}`,form,token)
+        :await api('POST','/api/skin-lesions',{...form,patient_id:patient.id},token);
+      if(d){toast(lesion?'Lesion updated':'Lesion added');onSave(d);}
+    }catch(e){toast(e.message,'error');}
+    setSaving(false);
+  };
+
+  return(
+    <div className="card" style={{marginBottom:16,border:'2px solid var(--accent)'}}>
+      <h3 style={{fontWeight:700,marginBottom:14,fontSize:15}}>{lesion?'Edit Lesion':'Track New Lesion'}</h3>
+      <form onSubmit={submit}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
+          <div>
+            <label className="label">Lesion Name / Label *</label>
+            <input className="input" value={form.name} onChange={set('name')} placeholder="e.g. Left forearm — compound nevus"/>
+          </div>
+          <div>
+            <label className="label">Body Location</label>
+            <input className="input" value={form.body_location} onChange={set('body_location')} placeholder="e.g. Left forearm, lateral aspect"/>
+          </div>
+          <div>
+            <label className="label">First Noted</label>
+            <input className="input" type="date" value={form.first_noted} onChange={set('first_noted')}/>
+          </div>
+          <div>
+            <label className="label">Status</label>
+            <select className="input" value={form.status} onChange={set('status')}>
+              <option value="monitoring">Monitoring</option>
+              <option value="referred">Referred to Dermatology</option>
+              <option value="resolved">Resolved</option>
+              <option value="excised">Excised</option>
+            </select>
+          </div>
+          <div style={{gridColumn:'span 2'}}>
+            <label className="label">Initial Clinical Description</label>
+            <textarea className="input" rows={2} value={form.description} onChange={set('description')} placeholder="Morphology, size, color, borders as initially observed…"/>
+          </div>
+          <div style={{gridColumn:'span 2'}}>
+            <label className="label">Notes</label>
+            <input className="input" value={form.notes} onChange={set('notes')} placeholder="Additional clinical notes…"/>
+          </div>
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:lesion?'Save Changes':'Add Lesion'}</button>
+          <button className="btn btn-secondary" type="button" onClick={onCancel}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LesionDetail({token, patient, user, lesion, onEdit, onUpdated}){
+  const toast=useToast();
+  const [images,setImages]=useState([]);
+  const [loadingImgs,setLoadingImgs]=useState(true);
+  const [analyzing,setAnalyzing]=useState(false);
+  const [uploading,setUploading]=useState(false);
+  const [selectedImg,setSelectedImg]=useState(null);
+  const fileRef=useRef(null);
+
+  const isPhysician=user.role==='admin'||user.role==='physician';
+  const sc=LESION_STATUS_CONFIG[lesion.status]||LESION_STATUS_CONFIG.monitoring;
+
+  const loadImages=useCallback(async()=>{
+    setLoadingImgs(true);
+    const d=await api('GET',`/api/skin-lesions/${lesion.id}/images`,null,token);
+    if(d){setImages(d);if(d.length>0)setSelectedImg(d[d.length-1]);}
+    setLoadingImgs(false);
+  },[lesion.id,token]);
+
+  useEffect(()=>{loadImages();},[loadImages]);
+
+  const uploadImage=async(file)=>{
+    if(!file) return;
+    setUploading(true);
+    try{
+      const fd=new FormData();
+      fd.append('image',file);
+      fd.append('taken_at',new Date().toISOString().slice(0,10));
+      const r=await fetch(`/api/skin-lesions/${lesion.id}/images`,{
+        method:'POST', headers:{Authorization:`Bearer ${token}`}, body:fd
+      });
+      if(!r.ok) throw new Error(await r.text());
+      toast('Photo uploaded');
+      await loadImages();
+      onUpdated({...lesion,image_count:(lesion.image_count||0)+1,latest_taken_at:new Date().toISOString().slice(0,10)});
+    }catch(e){toast(e.message,'error');}
+    setUploading(false);
+  };
+
+  const analyze=async()=>{
+    if(images.length===0){toast('Upload at least one photo first','error');return;}
+    setAnalyzing(true);
+    try{
+      const d=await api('POST',`/api/skin-lesions/${lesion.id}/analyze`,{},token);
+      if(d){
+        toast('Analysis complete');
+        // Update the latest image with the new analysis
+        setImages(prev=>prev.map(img=>img.id===d.image_id?{...img,ai_analysis:d.analysis,ai_analyzed_at:d.analyzed_at}:img));
+        setSelectedImg(prev=>prev?.id===d.image_id?{...prev,ai_analysis:d.analysis,ai_analyzed_at:d.analyzed_at}:prev);
+        onUpdated({...lesion,latest_urgency:d.analysis?.urgency,latest_summary:d.analysis?.summary});
+      }
+    }catch(e){toast(e.message,'error');}
+    setAnalyzing(false);
+  };
+
+  const deleteImage=async(imgId)=>{
+    if(!confirm('Delete this photo?')) return;
+    await api('DELETE',`/api/lesion-images/${imgId}`,null,token).catch(e=>toast(e.message,'error'));
+    setImages(prev=>prev.filter(i=>i.id!==imgId));
+    if(selectedImg?.id===imgId) setSelectedImg(images.find(i=>i.id!==imgId)||null);
+    toast('Photo deleted');
+  };
+
+  const analysis=selectedImg?.ai_analysis;
+  const urgConf=analysis?.urgency?URGENCY_CONFIG[analysis.urgency]:null;
+
+  const abcdeRow=(key,label,icon)=>{
+    if(!analysis?.abcde?.[key]) return null;
+    const item=analysis.abcde[key];
+    const score=item.score||item.change||item.estimated||'—';
+    const isConcerning=(
+      (key==='asymmetry'&&score==='high')||
+      (key==='border'&&score==='irregular')||
+      (key==='color'&&score==='variegated')||
+      (key==='evolution'&&(score==='changing'||score==='concerning'))
+    );
+    return(
+      <tr key={key} style={{borderBottom:'1px solid var(--border)'}}>
+        <td style={{padding:'8px 12px',fontWeight:600,fontSize:13,width:100}}>
+          <span style={{color:isConcerning?'#dc2626':'var(--text-2)'}}>{icon} {label}</span>
+        </td>
+        <td style={{padding:'8px 12px'}}>
+          <span style={{fontSize:12,fontWeight:600,padding:'2px 8px',borderRadius:10,
+            background:isConcerning?'#fee2e2':'#f5f5f4',
+            color:isConcerning?'#dc2626':'var(--text-2)'}}>{score}</span>
+        </td>
+        <td style={{padding:'8px 12px',fontSize:12,color:'var(--text-2)'}}>{item.notes}</td>
+      </tr>
+    );
+  };
+
+  return(
+    <div>
+      {/* Header */}
+      <div className="card" style={{marginBottom:12,padding:'14px 18px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
+          <div style={{flex:1}}>
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4,flexWrap:'wrap'}}>
+              <h3 style={{fontWeight:700,fontSize:16,margin:0}}>{lesion.name}</h3>
+              <span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:sc.bg,color:sc.color,fontWeight:600}}>{sc.label}</span>
+              {urgConf&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:urgConf.bg,color:urgConf.color,fontWeight:600}}>AI: {urgConf.label}</span>}
+            </div>
+            {lesion.body_location&&<div style={{fontSize:13,color:'var(--text-3)',marginBottom:2}}>📍 {lesion.body_location}</div>}
+            {lesion.description&&<div style={{fontSize:12,color:'var(--text-3)'}}>Initial description: {lesion.description}</div>}
+            {lesion.first_noted&&<div style={{fontSize:12,color:'var(--text-4)',marginTop:2}}>First noted: {lesion.first_noted}</div>}
+          </div>
+          {isPhysician&&(
+            <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap',justifyContent:'flex-end'}}>
+              <button className="btn btn-outline btn-sm" onClick={onEdit}><Icon name="edit" size={13}/>Edit</button>
+              <input type="file" ref={fileRef} hidden accept="image/*" onChange={e=>uploadImage(e.target.files[0])}/>
+              <button className="btn btn-secondary btn-sm" onClick={()=>fileRef.current?.click()} disabled={uploading}>
+                {uploading?<Spinner/>:<><Icon name="camera" size={13}/>Add Photo</>}
+              </button>
+              {images.length>0&&(
+                <button className="btn btn-primary btn-sm" onClick={analyze} disabled={analyzing}>
+                  {analyzing?<Spinner/>:<>🔬 Analyze Changes</>}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Photo timeline */}
+      {loadingImgs?(
+        <div style={{textAlign:'center',padding:32}}><Spinner/></div>
+      ):images.length===0?(
+        <div className="card" style={{textAlign:'center',padding:36,color:'var(--text-3)'}}>
+          <Icon name="camera" size={28}/><br/>
+          <span style={{fontSize:13,marginTop:8,display:'block'}}>No photos yet. Click "Add Photo" to upload the first image.</span>
+        </div>
+      ):(
+        <>
+          {/* Thumbnail strip */}
+          <div className="card" style={{marginBottom:12,padding:'12px 14px'}}>
+            <div style={{fontSize:11,fontWeight:600,color:'var(--text-3)',marginBottom:8,textTransform:'uppercase',letterSpacing:'.05em'}}>Photo Timeline — {images.length} image{images.length!==1?'s':''}</div>
+            <div style={{display:'flex',gap:8,overflowX:'auto',paddingBottom:4}}>
+              {images.map((img,idx)=>{
+                const isActive=selectedImg?.id===img.id;
+                const hasAnalysis=!!img.ai_analysis;
+                const uc=hasAnalysis&&img.ai_analysis?.urgency?URGENCY_CONFIG[img.ai_analysis.urgency]:null;
+                return(
+                  <div key={img.id} onClick={()=>setSelectedImg(img)}
+                    style={{flexShrink:0,cursor:'pointer',borderRadius:8,overflow:'hidden',
+                      border:`2.5px solid ${isActive?'var(--accent)':'var(--border)'}`,
+                      position:'relative',width:80,height:80}}>
+                    <img src={img.data_url} style={{width:'100%',height:'100%',objectFit:'cover',display:'block'}}
+                      alt={`Photo ${idx+1}`}/>
+                    <div style={{position:'absolute',bottom:0,left:0,right:0,
+                      background:'rgba(0,0,0,.55)',color:'#fff',fontSize:9,padding:'2px 4px',textAlign:'center'}}>
+                      {img.taken_at}
+                    </div>
+                    {uc&&(
+                      <div style={{position:'absolute',top:3,right:3,width:8,height:8,
+                        borderRadius:'50%',background:uc.color,border:'1.5px solid #fff'}}/>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Selected image + analysis */}
+          {selectedImg&&(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,alignItems:'start'}}>
+              {/* Image view */}
+              <div className="card" style={{padding:0,overflow:'hidden'}}>
+                <div style={{position:'relative'}}>
+                  <img src={selectedImg.data_url} style={{width:'100%',display:'block',maxHeight:360,objectFit:'contain',background:'#1c1917'}} alt="Lesion photo"/>
+                  <div style={{position:'absolute',bottom:0,left:0,right:0,background:'rgba(0,0,0,.6)',color:'#fff',padding:'8px 12px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:12}}>📅 {selectedImg.taken_at}</span>
+                    {isPhysician&&<button onClick={()=>deleteImage(selectedImg.id)}
+                      style={{background:'rgba(220,38,38,.8)',border:'none',color:'#fff',borderRadius:4,padding:'2px 8px',fontSize:11,cursor:'pointer'}}>
+                      Delete
+                    </button>}
+                  </div>
+                </div>
+                {selectedImg.notes&&(
+                  <div style={{padding:'10px 14px',fontSize:12,color:'var(--text-2)',borderTop:'1px solid var(--border)'}}>
+                    <b>Notes:</b> {selectedImg.notes}
+                  </div>
+                )}
+              </div>
+
+              {/* AI Analysis panel */}
+              <div>
+                {selectedImg.ai_analysis?(
+                  <div className="card" style={{padding:'14px 16px'}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                      <div style={{fontWeight:700,fontSize:14}}>🔬 AI Analysis</div>
+                      {urgConf&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:urgConf.bg,color:urgConf.color,fontWeight:700}}>{urgConf.label}</span>}
+                    </div>
+                    {selectedImg.ai_analysis.summary&&(
+                      <p style={{fontSize:13,color:'var(--text-2)',lineHeight:1.6,marginBottom:12,padding:'10px 12px',background:'var(--bg)',borderRadius:8,border:'1px solid var(--border)'}}>
+                        {selectedImg.ai_analysis.summary}
+                      </p>
+                    )}
+                    {/* ABCDE table */}
+                    <div style={{marginBottom:12}}>
+                      <div style={{fontSize:11,fontWeight:700,color:'var(--text-3)',marginBottom:6,textTransform:'uppercase',letterSpacing:'.05em'}}>ABCDE Criteria</div>
+                      <table style={{width:'100%',borderCollapse:'collapse',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+                        <tbody>
+                          {abcdeRow('asymmetry','Asymmetry','A')}
+                          {abcdeRow('border','Border','B')}
+                          {abcdeRow('color','Color','C')}
+                          {abcdeRow('diameter','Diameter','D')}
+                          {abcdeRow('evolution','Evolution','E')}
+                        </tbody>
+                      </table>
+                    </div>
+                    {selectedImg.ai_analysis.changes_from_previous&&(
+                      <div style={{marginBottom:10}}>
+                        <div style={{fontSize:11,fontWeight:700,color:'var(--text-3)',marginBottom:4,textTransform:'uppercase',letterSpacing:'.05em'}}>Changes from Previous</div>
+                        <p style={{fontSize:12,color:'var(--text-2)',lineHeight:1.5,margin:0}}>{selectedImg.ai_analysis.changes_from_previous}</p>
+                      </div>
+                    )}
+                    {selectedImg.ai_analysis.recommendation&&(
+                      <div style={{padding:'10px 12px',background:urgConf?.bg||'var(--bg)',border:`1px solid ${urgConf?.color||'var(--border)'}`,borderRadius:8}}>
+                        <div style={{fontSize:11,fontWeight:700,color:urgConf?.color||'var(--text-3)',marginBottom:3,textTransform:'uppercase',letterSpacing:'.05em'}}>Recommendation</div>
+                        <p style={{fontSize:12,color:'var(--text-2)',margin:0,lineHeight:1.5}}>{selectedImg.ai_analysis.recommendation}</p>
+                      </div>
+                    )}
+                    <div style={{marginTop:8,fontSize:10,color:'var(--text-4)',textAlign:'right'}}>
+                      Analyzed {selectedImg.ai_analyzed_at?.slice(0,10)} · AI-assisted, not a clinical diagnosis
+                    </div>
+                  </div>
+                ):(
+                  <div className="card" style={{padding:'24px 20px',textAlign:'center',color:'var(--text-3)'}}>
+                    <div style={{fontSize:24,marginBottom:8}}>🔬</div>
+                    <div style={{fontSize:13,marginBottom:12}}>No analysis yet for this photo.</div>
+                    {isPhysician&&(
+                      <button className="btn btn-primary" onClick={analyze} disabled={analyzing} style={{fontSize:12}}>
+                        {analyzing?<Spinner/>:'Run ABCDE Analysis'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Disclaimer */}
+      <div style={{marginTop:12,padding:'8px 14px',background:'#fefce8',border:'1px solid #fde68a',borderRadius:8,fontSize:11,color:'#92400e'}}>
+        ⚠ AI analysis is a clinical decision support tool only. It does not replace physician judgment, dermoscopy, or biopsy. Always correlate findings with full clinical context.
+      </div>
     </div>
   );
 }

@@ -483,6 +483,46 @@ class AdvanceBeneficiaryNotice(Base):
     updated_at       = Column(DateTime, default=datetime.utcnow)
 
 
+class SkinLesion(Base):
+    """
+    A named, located skin lesion being monitored over time for a patient.
+    Multiple LesionImage records are attached as the lesion is photographed.
+    """
+    __tablename__ = "skin_lesions"
+    id            = Column(Integer, primary_key=True, index=True)
+    patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    created_by    = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name          = Column(String, nullable=False)           # e.g. "Left forearm — compound nevus"
+    body_location = Column(String, default="")               # e.g. "Left forearm, lateral aspect"
+    description   = Column(Text, default="")                 # Initial clinical description
+    first_noted   = Column(String, default="")               # ISO date string
+    status        = Column(String, default="monitoring")     # monitoring | resolved | referred | excised
+    notes         = Column(Text, default="")
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class LesionImage(Base):
+    """
+    A single photograph of a SkinLesion at a point in time.
+    Stores image data as base64 and the AI analysis result as JSON.
+    """
+    __tablename__ = "lesion_images"
+    id            = Column(Integer, primary_key=True, index=True)
+    lesion_id     = Column(Integer, ForeignKey("skin_lesions.id"), nullable=False)
+    patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    uploaded_by   = Column(Integer, ForeignKey("users.id"), nullable=False)
+    image_data    = Column(Text, nullable=False)             # base64-encoded image bytes
+    image_mime    = Column(String, default="image/jpeg")     # image/jpeg or image/png
+    image_filename= Column(String, default="")
+    taken_at      = Column(String, default="")               # ISO date when photo was taken
+    notes         = Column(Text, default="")                 # Clinical notes for this photo
+    # AI analysis result — populated by POST /api/skin-lesions/{id}/analyze
+    ai_analysis   = Column(Text, nullable=True)              # JSON: {summary, abcde, changes, recommendation, urgency}
+    ai_analyzed_at= Column(DateTime, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
     id = Column(Integer, primary_key=True, index=True)

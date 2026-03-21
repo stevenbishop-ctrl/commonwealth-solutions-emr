@@ -1893,6 +1893,358 @@ def void_abn(
     return {"voided": True}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SKIN LESION TRACKING MODULE
+# Serial dermoscopic photography with AI-assisted ABCDE analysis via Claude Vision
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _lesion_dict(l: models.SkinLesion, include_latest_thumb: bool = False, db: Session = None) -> dict:
+    d = {
+        "id":            l.id,
+        "patient_id":    l.patient_id,
+        "created_by":    l.created_by,
+        "name":          l.name,
+        "body_location": l.body_location,
+        "description":   l.description,
+        "first_noted":   l.first_noted,
+        "status":        l.status,
+        "notes":         l.notes,
+        "created_at":    l.created_at.isoformat(),
+        "updated_at":    l.updated_at.isoformat(),
+    }
+    if include_latest_thumb and db:
+        latest = (db.query(models.LesionImage)
+                  .filter(models.LesionImage.lesion_id == l.id)
+                  .order_by(models.LesionImage.created_at.desc())
+                  .first())
+        d["image_count"] = (db.query(models.LesionImage)
+                            .filter(models.LesionImage.lesion_id == l.id).count())
+        d["latest_image_id"] = latest.id if latest else None
+        d["latest_taken_at"] = latest.taken_at if latest else None
+        # Include latest AI analysis summary if available
+        if latest and latest.ai_analysis:
+            try:
+                analysis = json.loads(latest.ai_analysis)
+                d["latest_urgency"] = analysis.get("urgency")
+                d["latest_summary"] = analysis.get("summary", "")[:120]
+            except Exception:
+                pass
+    return d
+
+
+def _image_dict(img: models.LesionImage, include_data: bool = True) -> dict:
+    d = {
+        "id":             img.id,
+        "lesion_id":      img.lesion_id,
+        "patient_id":     img.patient_id,
+        "uploaded_by":    img.uploaded_by,
+        "image_mime":     img.image_mime,
+        "image_filename": img.image_filename,
+        "taken_at":       img.taken_at,
+        "notes":          img.notes,
+        "ai_analysis":    json.loads(img.ai_analysis) if img.ai_analysis else None,
+        "ai_analyzed_at": img.ai_analyzed_at.isoformat() if img.ai_analyzed_at else None,
+        "created_at":     img.created_at.isoformat(),
+    }
+    if include_data:
+        d["data_url"] = f"data:{img.image_mime};base64,{img.image_data}"
+    return d
+
+
+@app.get("/api/skin-lesions")
+def list_skin_lesions(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    lesions = (db.query(models.SkinLesion)
+               .filter(models.SkinLesion.patient_id == patient_id)
+               .order_by(models.SkinLesion.created_at.desc()).all())
+    return [_lesion_dict(l, include_latest_thumb=True, db=db) for l in lesions]
+
+
+@app.post("/api/skin-lesions")
+def create_skin_lesion(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    patient_id = body.get("patient_id")
+    if not patient_id:
+        raise HTTPException(status_code=400, detail="patient_id required")
+    lesion = models.SkinLesion(
+        patient_id    = patient_id,
+        created_by    = current_user.id,
+        name          = body.get("name", "Unnamed lesion"),
+        body_location = body.get("body_location", ""),
+        description   = body.get("description", ""),
+        first_noted   = body.get("first_noted", datetime.utcnow().date().isoformat()),
+        status        = body.get("status", "monitoring"),
+        notes         = body.get("notes", ""),
+    )
+    db.add(lesion)
+    db.commit()
+    db.refresh(lesion)
+    audit(db, current_user.id, "CREATE_SKIN_LESION", "SkinLesion", str(lesion.id),
+          f"Patient {patient_id}: {lesion.name} @ {lesion.body_location}")
+    return _lesion_dict(lesion, include_latest_thumb=True, db=db)
+
+
+@app.put("/api/skin-lesions/{lesion_id}")
+def update_skin_lesion(
+    lesion_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
+    if not lesion:
+        raise HTTPException(status_code=404, detail="Lesion not found")
+    for field in ("name", "body_location", "description", "first_noted", "status", "notes"):
+        if field in body:
+            setattr(lesion, field, body[field])
+    lesion.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(lesion)
+    audit(db, current_user.id, "UPDATE_SKIN_LESION", "SkinLesion", str(lesion_id), "")
+    return _lesion_dict(lesion, include_latest_thumb=True, db=db)
+
+
+@app.get("/api/skin-lesions/{lesion_id}/images")
+def list_lesion_images(
+    lesion_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    imgs = (db.query(models.LesionImage)
+            .filter(models.LesionImage.lesion_id == lesion_id)
+            .order_by(models.LesionImage.taken_at.asc(), models.LesionImage.created_at.asc())
+            .all())
+    return [_image_dict(img, include_data=True) for img in imgs]
+
+
+@app.post("/api/skin-lesions/{lesion_id}/images")
+async def upload_lesion_image(
+    lesion_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Upload a photo for a skin lesion via multipart/form-data."""
+    lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
+    if not lesion:
+        raise HTTPException(status_code=404, detail="Lesion not found")
+
+    content_type = request.headers.get("content-type", "")
+    if "multipart" not in content_type:
+        raise HTTPException(status_code=400, detail="Multipart form data required")
+
+    form = await request.form()
+    image_file = form.get("image")
+    if not image_file:
+        raise HTTPException(status_code=400, detail="image field required")
+
+    raw = await image_file.read()
+    mime = getattr(image_file, "content_type", None) or "image/jpeg"
+    if mime not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
+        mime = "image/jpeg"
+
+    img = models.LesionImage(
+        lesion_id      = lesion_id,
+        patient_id     = lesion.patient_id,
+        uploaded_by    = current_user.id,
+        image_data     = base64.b64encode(raw).decode("utf-8"),
+        image_mime     = mime,
+        image_filename = getattr(image_file, "filename", f"lesion_{lesion_id}.jpg"),
+        taken_at       = form.get("taken_at", datetime.utcnow().date().isoformat()),
+        notes          = form.get("notes", ""),
+    )
+    db.add(img)
+    # Update lesion timestamp
+    lesion.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(img)
+    audit(db, current_user.id, "UPLOAD_LESION_IMAGE", "LesionImage", str(img.id),
+          f"Lesion {lesion_id} — {img.taken_at}")
+    return _image_dict(img, include_data=False)
+
+
+@app.delete("/api/lesion-images/{image_id}")
+def delete_lesion_image(
+    image_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if current_user.role not in ("admin", "physician"):
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+    img = db.query(models.LesionImage).filter(models.LesionImage.id == image_id).first()
+    if not img:
+        raise HTTPException(status_code=404, detail="Image not found")
+    db.delete(img)
+    db.commit()
+    audit(db, current_user.id, "DELETE_LESION_IMAGE", "LesionImage", str(image_id), "")
+    return {"deleted": True}
+
+
+@app.post("/api/skin-lesions/{lesion_id}/analyze")
+async def analyze_lesion(
+    lesion_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Use Claude Vision (claude-sonnet-4-6) to analyze the latest lesion image against
+    the full history, scoring ABCDE dermoscopy criteria and flagging significant changes.
+    Requires ANTHROPIC_API_KEY to be set.
+    """
+    if current_user.role not in ("admin", "physician"):
+        raise HTTPException(status_code=403, detail="Physician access required")
+
+    if not anthropic_key:
+        raise HTTPException(status_code=503,
+            detail="ANTHROPIC_API_KEY not configured — add it to Railway environment variables")
+
+    lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
+    if not lesion:
+        raise HTTPException(status_code=404, detail="Lesion not found")
+
+    images = (db.query(models.LesionImage)
+              .filter(models.LesionImage.lesion_id == lesion_id)
+              .order_by(models.LesionImage.taken_at.asc(), models.LesionImage.created_at.asc())
+              .all())
+    if not images:
+        raise HTTPException(status_code=400, detail="No images uploaded for this lesion yet")
+
+    latest = images[-1]
+    previous = images[:-1]
+
+    # Build the vision message content
+    # Include up to 4 previous images for change comparison
+    content = []
+
+    if previous:
+        content.append({
+            "type": "text",
+            "text": f"These are {len(previous)} previous photograph(s) of this skin lesion, "
+                    f"ordered from oldest to most recent. Use them to assess evolution over time:"
+        })
+        for i, img in enumerate(previous[-4:]):  # max 4 previous images
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": img.image_mime,
+                    "data": img.image_data,
+                }
+            })
+            content.append({
+                "type": "text",
+                "text": f"[Photo {i+1} — taken {img.taken_at}]"
+            })
+
+    content.append({
+        "type": "text",
+        "text": "This is the most recent photograph, taken today, requiring analysis:"
+    })
+    content.append({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": latest.image_mime,
+            "data": latest.image_data,
+        }
+    })
+
+    patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
+    age_str = ""
+    if patient and patient.dob:
+        try:
+            from datetime import date
+            dob = date.fromisoformat(patient.dob)
+            age_str = f" The patient is {(date.today() - dob).days // 365} years old."
+        except Exception:
+            pass
+
+    content.append({
+        "type": "text",
+        "text": (
+            f"Lesion name: {lesion.name}\n"
+            f"Location: {lesion.body_location}\n"
+            f"Initial description: {lesion.description}\n"
+            f"First noted: {lesion.first_noted}\n"
+            f"Number of serial photos: {len(images)}\n"
+            f"{age_str}\n\n"
+            "Please perform a structured ABCDE dermoscopy assessment on the most recent image "
+            "and compare to any previous images for evolution. Respond ONLY with a JSON object "
+            "matching this exact schema (no markdown, no prose outside the JSON):\n"
+            '{\n'
+            '  "summary": "1-2 sentence clinical summary of the lesion and any notable changes",\n'
+            '  "abcde": {\n'
+            '    "asymmetry":  {"score": "low|moderate|high",    "notes": "brief observation"},\n'
+            '    "border":     {"score": "regular|irregular",     "notes": "brief observation"},\n'
+            '    "color":      {"score": "uniform|variegated",    "notes": "brief observation"},\n'
+            '    "diameter":   {"estimated": "~Xmm",              "notes": "brief observation"},\n'
+            '    "evolution":  {"change": "stable|changing|concerning", "notes": "brief observation"}\n'
+            '  },\n'
+            '  "changes_from_previous": "description of changes vs prior photos, or \\"No prior images\\" if first photo",\n'
+            '  "recommendation": "clinical recommendation for next step",\n'
+            '  "urgency": "routine|follow-up-3-months|follow-up-6-weeks|urgent-referral"\n'
+            '}'
+        )
+    })
+
+    system_prompt = (
+        "You are a clinical decision support tool embedded in a HIPAA-compliant EMR used by "
+        "a physician. Your role is to provide structured dermoscopy analysis to assist the "
+        "physician — not to replace their clinical judgment. Always respond with valid JSON only. "
+        "Be precise, conservative, and clinically accurate. Flag any features concerning for "
+        "melanoma (irregular borders, multiple colors, rapid growth, ulceration) clearly in "
+        "the urgency field."
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-6",   # Use Sonnet for vision quality
+                    "max_tokens": 1024,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": content}],
+                },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502,
+                detail=f"Claude API error {resp.status_code}: {resp.text[:200]}")
+
+        raw_json = resp.json()["content"][0]["text"].strip()
+        # Strip any accidental markdown fences
+        if raw_json.startswith("```"):
+            raw_json = re.sub(r"^```[a-z]*\n?", "", raw_json)
+            raw_json = re.sub(r"\n?```$", "", raw_json.strip())
+
+        analysis = json.loads(raw_json)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=502, detail=f"Claude returned invalid JSON: {e}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Analysis timed out — please retry")
+
+    # Persist analysis on the latest image
+    latest.ai_analysis   = json.dumps(analysis)
+    latest.ai_analyzed_at = datetime.utcnow()
+    lesion.updated_at    = datetime.utcnow()
+    db.commit()
+
+    audit(db, current_user.id, "ANALYZE_SKIN_LESION", "SkinLesion", str(lesion_id),
+          f"Urgency: {analysis.get('urgency','unknown')} | Images: {len(images)}")
+    return {"image_id": latest.id, "analysis": analysis, "analyzed_at": latest.ai_analyzed_at.isoformat()}
+
+
 @app.get("/api/labcorp/tests")
 def search_labcorp_tests(
     q: str = "",
@@ -4542,6 +4894,34 @@ def _migrate_add_billing_columns(db: Session):
             notes TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        # Skin lesion tracking module
+        """CREATE TABLE IF NOT EXISTS skin_lesions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            name VARCHAR NOT NULL,
+            body_location VARCHAR DEFAULT '',
+            description TEXT DEFAULT '',
+            first_noted VARCHAR DEFAULT '',
+            status VARCHAR DEFAULT 'monitoring',
+            notes TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS lesion_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesion_id INTEGER NOT NULL REFERENCES skin_lesions(id),
+            patient_id INTEGER NOT NULL REFERENCES patients(id),
+            uploaded_by INTEGER NOT NULL REFERENCES users(id),
+            image_data TEXT NOT NULL,
+            image_mime VARCHAR DEFAULT 'image/jpeg',
+            image_filename VARCHAR DEFAULT '',
+            taken_at VARCHAR DEFAULT '',
+            notes TEXT DEFAULT '',
+            ai_analysis TEXT,
+            ai_analyzed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""",
     ]
     from sqlalchemy import text
