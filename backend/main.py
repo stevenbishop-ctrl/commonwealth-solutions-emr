@@ -29,7 +29,7 @@ import bcrypt
 import httpx
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -5853,6 +5853,529 @@ def portal_export_records(
         content=data,
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RECORD IMPORT  (AI-powered chart filing)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_IMPORT_PROMPT = """You are a clinical data extraction engine for an EMR system.
+You will receive raw text extracted from a patient record (referral note, discharge summary, old chart, lab report, etc.).
+
+Your job is to extract and structure ALL clinical information into these four categories:
+
+1. clinical_notes  — Any narrative visit notes, progress notes, consult notes, H&P, discharge summaries, etc.
+2. lab_results     — Any laboratory test results with test name, value, units, reference range, and date.
+3. imaging_orders  — Any radiology/imaging reports or orders (X-ray, CT, MRI, ultrasound, etc.).
+4. medications     — Any medication lists, prescriptions, or current meds sections.
+
+Return ONLY valid JSON in exactly this structure — no markdown, no prose, just JSON:
+{
+  "summary": "One sentence describing what this document is.",
+  "clinical_notes": [
+    {
+      "visit_date": "YYYY-MM-DD or empty string if unknown",
+      "note_type": "SOAP|Consult|Discharge|H&P|Progress|Other",
+      "chief_complaint": "...",
+      "hpi": "...",
+      "assessment": "...",
+      "plan": "..."
+    }
+  ],
+  "lab_results": [
+    {
+      "test_name": "...",
+      "value": "...",
+      "units": "...",
+      "reference_range": "...",
+      "date": "YYYY-MM-DD or empty",
+      "flag": "normal|high|low|critical|unknown"
+    }
+  ],
+  "imaging_orders": [
+    {
+      "study_type": "X-Ray|CT|MRI|Ultrasound|PET|Nuclear|Other",
+      "body_part": "...",
+      "date": "YYYY-MM-DD or empty",
+      "clinical_indication": "...",
+      "result_notes": "impression/findings from the report, or empty if not present"
+    }
+  ],
+  "medications": [
+    {
+      "name": "...",
+      "dosage": "...",
+      "frequency": "...",
+      "route": "oral|IV|IM|topical|inhaled|other",
+      "indication": "..."
+    }
+  ]
+}
+
+If a category has no data, return an empty array for it. Do not invent data — only extract what is present.
+"""
+
+
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract plain text from a PDF using pdfplumber."""
+    import pdfplumber, io
+    text_parts = []
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                text_parts.append(t)
+    return "\n\n".join(text_parts)
+
+
+def _call_import_ai(raw_text: str) -> dict:
+    """Send extracted text to Anthropic and return parsed JSON."""
+    client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    # Trim to ~15k chars to stay within token limits while preserving most content
+    trimmed = raw_text[:15000]
+    response = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=4096,
+        messages=[
+            {
+                "role": "user",
+                "content": f"{_IMPORT_PROMPT}\n\n---DOCUMENT TEXT---\n{trimmed}",
+            }
+        ],
+    )
+    raw_json = response.content[0].text.strip()
+    # Strip markdown fences if model wrapped the JSON
+    if raw_json.startswith("```"):
+        raw_json = re.sub(r"^```[a-z]*\n?", "", raw_json)
+        raw_json = re.sub(r"\n?```$", "", raw_json)
+    return json.loads(raw_json)
+
+
+def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Session) -> dict:
+    """Create real DB records from the AI-parsed import data."""
+    counts = {"notes": 0, "labs": 0, "imaging": 0, "meds": 0}
+
+    # ── Clinical notes ───────────────────────────────────────────────────────
+    for n in parsed.get("clinical_notes", []):
+        try:
+            visit_dt = datetime.strptime(n.get("visit_date", ""), "%Y-%m-%d") if n.get("visit_date") else datetime.utcnow()
+        except ValueError:
+            visit_dt = datetime.utcnow()
+        note = models.ClinicalNote(
+            patient_id=patient_id,
+            physician_id=physician_id,
+            visit_date=visit_dt,
+            note_type=n.get("note_type", "Other"),
+            chief_complaint=n.get("chief_complaint", ""),
+            hpi=n.get("hpi", ""),
+            assessment=n.get("assessment", ""),
+            plan=n.get("plan", ""),
+            status="signed",   # imported notes are treated as historical/signed
+            ai_generated=False,
+        )
+        db.add(note)
+        counts["notes"] += 1
+
+    # ── Lab results — store as LabOrder with result data ────────────────────
+    if parsed.get("lab_results"):
+        result_observations = []
+        for lr in parsed["lab_results"]:
+            result_observations.append({
+                "test_name": lr.get("test_name", ""),
+                "value": lr.get("value", ""),
+                "units": lr.get("units", ""),
+                "reference_range": lr.get("reference_range", ""),
+                "flag": lr.get("flag", "unknown"),
+                "date": lr.get("date", ""),
+            })
+        # Group all imported labs into a single "imported" order
+        order = models.LabOrder(
+            patient_id=patient_id,
+            physician_id=physician_id,
+            tests=json.dumps([lr.get("test_name", "") for lr in parsed["lab_results"]]),
+            clinical_indication="Imported from external record",
+            status="resulted",
+            notes="Imported via record import feature",
+            result_data=json.dumps(result_observations),
+        )
+        db.add(order)
+        counts["labs"] = len(parsed["lab_results"])
+
+    # ── Imaging ──────────────────────────────────────────────────────────────
+    for img in parsed.get("imaging_orders", []):
+        try:
+            sched = datetime.strptime(img.get("date", ""), "%Y-%m-%d") if img.get("date") else None
+        except ValueError:
+            sched = None
+        io_rec = models.ImagingOrder(
+            patient_id=patient_id,
+            physician_id=physician_id,
+            study_type=img.get("study_type", "Other"),
+            body_part=img.get("body_part", ""),
+            clinical_indication=img.get("clinical_indication", "Imported from external record"),
+            status="results_received" if img.get("result_notes") else "completed",
+            result_notes=img.get("result_notes", ""),
+            scheduled_at=sched,
+            completed_at=sched,
+        )
+        db.add(io_rec)
+        counts["imaging"] += 1
+
+    # ── Medications ──────────────────────────────────────────────────────────
+    for med in parsed.get("medications", []):
+        m = models.PatientMedication(
+            patient_id=patient_id,
+            name=med.get("name", ""),
+            dosage=med.get("dosage", ""),
+            frequency=med.get("frequency", ""),
+            route=med.get("route", "oral"),
+            indication=med.get("indication", ""),
+            is_active=True,
+        )
+        db.add(m)
+        counts["meds"] += 1
+
+    db.commit()
+    return counts
+
+
+@app.post("/api/patients/{patient_id}/import-records")
+async def import_patient_records(
+    patient_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+    file: Optional[UploadFile] = File(None),
+    text: Optional[str] = Form(None),
+):
+    """
+    Accept a PDF upload or pasted text, parse with AI, and file into the
+    appropriate tabs of the patient chart automatically.
+    """
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+
+    # ── Extract raw text ─────────────────────────────────────────────────────
+    source_type = "text"
+    filename = ""
+    raw_text = ""
+
+    if file and file.filename:
+        filename = file.filename
+        content = await file.read()
+        if file.filename.lower().endswith(".pdf"):
+            source_type = "pdf"
+            try:
+                raw_text = _extract_pdf_text(content)
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"Could not read PDF: {e}")
+        else:
+            raw_text = content.decode("utf-8", errors="replace")
+    elif text:
+        raw_text = text
+    else:
+        raise HTTPException(status_code=400, detail="Provide either a file upload or pasted text.")
+
+    if not raw_text.strip():
+        raise HTTPException(status_code=422, detail="No readable text found in the document.")
+
+    # ── Create import record (pending) ───────────────────────────────────────
+    imp = models.ImportedRecord(
+        patient_id=patient_id,
+        uploaded_by=current_user.id,
+        filename=filename,
+        source_type=source_type,
+        raw_text=raw_text[:20000],   # cap stored text
+        status="pending",
+    )
+    db.add(imp)
+    db.commit()
+    db.refresh(imp)
+
+    # ── Call AI ──────────────────────────────────────────────────────────────
+    try:
+        parsed = _call_import_ai(raw_text)
+    except Exception as e:
+        imp.status = "error"
+        imp.error_detail = str(e)
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"AI parsing failed: {e}")
+
+    # ── File the data ─────────────────────────────────────────────────────────
+    try:
+        counts = _file_imported_data(patient_id, parsed, current_user.id, db)
+    except Exception as e:
+        imp.status = "error"
+        imp.error_detail = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Failed to file records: {e}")
+
+    # ── Update import record ─────────────────────────────────────────────────
+    imp.ai_summary = parsed.get("summary", "")
+    imp.notes_filed = counts["notes"]
+    imp.labs_filed = counts["labs"]
+    imp.imaging_filed = counts["imaging"]
+    imp.meds_filed = counts["meds"]
+    imp.status = "complete"
+    db.commit()
+
+    audit(db, current_user.id, "IMPORT_RECORDS", "Patient", str(patient_id), request=request,
+          details=f"import_id={imp.id} notes={counts['notes']} labs={counts['labs']} "
+                  f"imaging={counts['imaging']} meds={counts['meds']}")
+
+    return {
+        "import_id": imp.id,
+        "summary": imp.ai_summary,
+        "filed": counts,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATIENT MESSAGING  (secure portal messages + two-way SMS forwarding)
+# ══════════════════════════════════════════════════════════════════════════════
+
+PHYSICIAN_CELL    = os.getenv("PHYSICIAN_CELL_PHONE", "")   # E.164, e.g. +12145550100
+TELNYX_SMS_NUMBER = os.getenv("TELNYX_SMS_NUMBER", "")      # Your Telnyx SMS-capable number
+
+
+def _send_sms(to: str, body: str) -> Optional[str]:
+    """Send an SMS via Telnyx. Returns message ID or None on failure."""
+    api_key = os.getenv("TELNYX_API_KEY", "")
+    if not api_key or not TELNYX_SMS_NUMBER or not to:
+        return None
+    try:
+        resp = httpx.post(
+            "https://api.telnyx.com/v2/messages",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"from": TELNYX_SMS_NUMBER, "to": to, "text": body},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json().get("data", {}).get("id")
+    except Exception:
+        return None
+
+
+@app.get("/api/patients/{patient_id}/messages")
+def get_messages(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Retrieve the full message thread for a patient (provider view)."""
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+
+    messages = (
+        db.query(models.PatientMessage)
+        .filter(models.PatientMessage.patient_id == patient_id)
+        .order_by(models.PatientMessage.created_at.asc())
+        .all()
+    )
+    # Mark unread inbound messages as read
+    for m in messages:
+        if m.direction == "inbound" and not m.read_at:
+            m.read_at = datetime.utcnow()
+    db.commit()
+    return [clean(m) for m in messages]
+
+
+@app.post("/api/patients/{patient_id}/messages")
+def send_message_to_patient(
+    patient_id: int,
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Provider sends a message to the patient (outbound). Stored in DB; patient sees it in portal."""
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+
+    body = (data.get("body") or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Message body is required.")
+
+    msg = models.PatientMessage(
+        patient_id=patient_id,
+        direction="outbound",
+        body=body,
+        sms_status="not_applicable",
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    audit(db, current_user.id, "SEND_PATIENT_MESSAGE", "Patient", str(patient_id), request=request)
+    return clean(msg)
+
+
+@app.post("/api/patients/{patient_id}/messages/sms-forward")
+def sms_forward_message(
+    patient_id: int,
+    data: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Re-forward a patient message to the physician's cell phone via SMS.
+    Useful if the original forward failed or physician wants it resent.
+    """
+    msg_id = data.get("message_id")
+    msg = db.query(models.PatientMessage).filter(
+        models.PatientMessage.id == msg_id,
+        models.PatientMessage.patient_id == patient_id,
+    ).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    sms_body = (
+        f"[Valiant DPC] Msg from {patient.first_name} {patient.last_name} "
+        f"(PT#{patient_id}):\n\n{msg.body}\n\n"
+        f"Reply to this number to respond to the patient."
+    )
+    mid = _send_sms(PHYSICIAN_CELL, sms_body)
+    if mid:
+        msg.sms_status = "sent"
+        msg.telnyx_msg_id = mid
+        db.commit()
+    return {"sent": bool(mid)}
+
+
+@app.get("/api/messages/unread-count")
+def unread_message_count(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Total unread inbound messages across all patients (for the badge in the sidebar)."""
+    count = (
+        db.query(models.PatientMessage)
+        .filter(
+            models.PatientMessage.direction == "inbound",
+            models.PatientMessage.read_at == None,
+        )
+        .count()
+    )
+    return {"unread": count}
+
+
+# ── Patient portal — messaging ────────────────────────────────────────────────
+
+@app.get("/portal/messages")
+def portal_get_messages(
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """Patient retrieves their message thread with the practice."""
+    messages = (
+        db.query(models.PatientMessage)
+        .filter(models.PatientMessage.patient_id == patient.id)
+        .order_by(models.PatientMessage.created_at.asc())
+        .all()
+    )
+    # Mark outbound (provider→patient) messages as read when patient views them
+    for m in messages:
+        if m.direction == "outbound" and not m.read_at:
+            m.read_at = datetime.utcnow()
+    db.commit()
+    return [clean(m) for m in messages]
+
+
+@app.post("/portal/messages")
+def portal_send_message(
+    data: dict,
+    request: Request,
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """Patient sends a message. Stored in DB and forwarded to physician via SMS."""
+    body = (data.get("body") or "").strip()
+    if not body:
+        raise HTTPException(status_code=400, detail="Message body is required.")
+    if len(body) > 2000:
+        raise HTTPException(status_code=400, detail="Message too long (max 2000 characters).")
+
+    msg = models.PatientMessage(
+        patient_id=patient.id,
+        direction="inbound",
+        body=body,
+        sms_status="pending",
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+
+    # Forward to physician via SMS
+    sms_body = (
+        f"[Valiant DPC] New message from {patient.first_name} {patient.last_name} "
+        f"(PT#{patient.id}):\n\n{body}\n\n"
+        f"Reply to this number to respond to the patient."
+    )
+    mid = _send_sms(PHYSICIAN_CELL, sms_body)
+    msg.sms_status = "sent" if mid else "failed"
+    if mid:
+        msg.telnyx_msg_id = mid
+    db.commit()
+
+    audit(db, None, "PORTAL_SEND_MESSAGE", "Patient", str(patient.id), request=request)
+    return clean(msg)
+
+
+@app.post("/api/webhooks/telnyx/sms")
+async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Telnyx inbound SMS webhook.
+    When the physician replies to the Telnyx SMS number from their cell phone,
+    this endpoint receives the message and files it as an outbound reply in the
+    most recent patient's thread.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": False}
+
+    event_type = payload.get("data", {}).get("event_type", "")
+    if event_type != "message.received":
+        return {"ok": True, "ignored": event_type}
+
+    record = payload.get("data", {}).get("payload", {})
+    from_number = record.get("from", {}).get("phone_number", "")
+    inbound_body = (record.get("text") or "").strip()
+
+    if not inbound_body:
+        return {"ok": True, "ignored": "empty body"}
+
+    # ── If the SMS is from the physician, file it as an outbound reply ───────
+    if PHYSICIAN_CELL and from_number == PHYSICIAN_CELL:
+        # Find the most recent unread inbound message to determine which patient
+        recent = (
+            db.query(models.PatientMessage)
+            .filter(models.PatientMessage.direction == "inbound")
+            .order_by(models.PatientMessage.created_at.desc())
+            .first()
+        )
+        if recent:
+            reply = models.PatientMessage(
+                patient_id=recent.patient_id,
+                direction="outbound",
+                body=inbound_body,
+                sms_status="delivered",
+            )
+            db.add(reply)
+            db.commit()
+            audit(db, None, "SMS_REPLY_FILED", "Patient", str(recent.patient_id),
+                  details=f"Physician reply via SMS filed to patient {recent.patient_id}")
+            return {"ok": True, "filed_to_patient": recent.patient_id}
+
+    return {"ok": True, "ignored": "unknown sender"}
 
 
 @app.get("/portal")

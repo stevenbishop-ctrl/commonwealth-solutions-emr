@@ -18,6 +18,34 @@ Base.metadata.create_all(bind=engine)
 _migrations = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
+    # patient_messages table — created by Base.metadata.create_all above if new DB,
+    # but existing DBs need these explicit statements to be safe
+    """CREATE TABLE IF NOT EXISTS patient_messages (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patients(id),
+        direction VARCHAR NOT NULL,
+        body TEXT NOT NULL,
+        sms_status VARCHAR DEFAULT 'pending',
+        telnyx_msg_id VARCHAR,
+        read_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
+    """CREATE TABLE IF NOT EXISTS imported_records (
+        id SERIAL PRIMARY KEY,
+        patient_id INTEGER NOT NULL REFERENCES patients(id),
+        uploaded_by INTEGER NOT NULL REFERENCES users(id),
+        filename VARCHAR DEFAULT '',
+        source_type VARCHAR DEFAULT 'pdf',
+        raw_text TEXT DEFAULT '',
+        ai_summary TEXT DEFAULT '',
+        notes_filed INTEGER DEFAULT 0,
+        labs_filed INTEGER DEFAULT 0,
+        imaging_filed INTEGER DEFAULT 0,
+        meds_filed INTEGER DEFAULT 0,
+        status VARCHAR DEFAULT 'pending',
+        error_detail TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT NOW()
+    )""",
 ]
 with engine.connect() as _conn:
     for _sql in _migrations:

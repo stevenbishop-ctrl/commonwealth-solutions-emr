@@ -180,6 +180,7 @@ const Icon=({name,size=18,cls=''})=>{
     pill:<><path d="M10.5 3.5a6 6 0 0 1 8.485 8.485l-3 3-5.485-5.485 3-3z"/><path d="m3.5 10.5 5.5 5.5"/><path d="M8.5 13.5 13 9"/></>,
     skin:<><circle cx="12" cy="12" r="3"/><path d="M3 9a9 9 0 0 1 9-6 9 9 0 0 1 6.35 2.65"/><path d="M21 15a9 9 0 0 1-9 6 9 9 0 0 1-6.35-2.65"/><path d="m15 9 2-2"/><path d="m9 15-2 2"/></>,
     camera:<><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></>,
+    chat:<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 0 2 2z"/></>,
   };
   return(
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={cls}>
@@ -822,7 +823,15 @@ function PatientChart({token,patient,onBack,user}){
   const [faxes,setFaxes]=useState([]);
   const [memberships,setMemberships]=useState([]);
   const [payments,setPayments]=useState([]);
+  const [messages,setMessages]=useState([]);
   const [patientData,setPatientData]=useState(patient);
+  // Import state
+  const [showImportModal,setShowImportModal]=useState(false);
+  const [importFile,setImportFile]=useState(null);
+  const [importText,setImportText]=useState('');
+  const [importing,setImporting]=useState(false);
+  const [importResult,setImportResult]=useState(null);
+  const importFileRef=React.useRef();
   const [editingPatient,setEditingPatient]=useState(false);
   const [portalForm,setPortalForm]=useState({email:'',password:''});
   const [portalSaving,setPortalSaving]=useState(false);
@@ -848,7 +857,40 @@ function PatientChart({token,patient,onBack,user}){
     api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
     api('GET',`/api/memberships?patient_id=${pid}`,null,token).then(d=>d&&setMemberships(d));
     api('GET',`/api/payments?patient_id=${pid}`,null,token).then(d=>d&&setPayments(d));
+    api('GET',`/api/patients/${pid}/messages`,null,token).then(d=>d&&setMessages(d));
   },[patient.id,token]);
+
+  // ── Import handler ─────────────────────────────────────────────────────────
+  const runImport=async()=>{
+    if(!importFile&&!importText.trim()){toast('Please upload a PDF or paste text','error');return;}
+    setImporting(true);setImportResult(null);
+    try{
+      let resp;
+      if(importFile){
+        const fd=new FormData();
+        fd.append('file',importFile);
+        resp=await fetch(`/api/patients/${patient.id}/import-records`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`},body:fd
+        });
+      } else {
+        const fd=new FormData();
+        fd.append('text',importText);
+        resp=await fetch(`/api/patients/${patient.id}/import-records`,{
+          method:'POST',headers:{Authorization:`Bearer ${token}`},body:fd
+        });
+      }
+      if(!resp.ok){const e=await resp.json();throw new Error(e.detail||'Import failed');}
+      const r=await resp.json();
+      setImportResult(r);
+      // Refresh data tabs that may have new records
+      const pid=patient.id;
+      api('GET',`/api/notes?patient_id=${pid}`,null,token).then(d=>d&&setNotes(d));
+      api('GET',`/api/lab-orders?patient_id=${pid}`,null,token).then(d=>d&&setLabs(d));
+      api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
+      toast(`Import complete — ${r.filed.notes} notes, ${r.filed.labs} labs, ${r.filed.imaging} imaging, ${r.filed.meds} meds filed`,'success');
+    }catch(e){toast(e.message,'error');}
+    setImporting(false);
+  };
 
   const downloadPDF=async(noteId)=>{
     setPdfLoading(noteId);
@@ -920,7 +962,7 @@ function PatientChart({token,patient,onBack,user}){
     />
   );
 
-  const tabs=[['info','Demographics','users'],['history','History & Meds','clipboard'],['rx','Prescriptions','pill'],['notes','Notes','file'],['labs','Labs','lab'],['imaging','Imaging','xray'],['skin','Skin','skin'],['fax','Fax','fax'],['memberships','Memberships','star'],['payments','Payments','payment']];
+  const tabs=[['info','Demographics','users'],['history','History & Meds','clipboard'],['rx','Prescriptions','pill'],['notes','Notes','file'],['labs','Labs','lab'],['imaging','Imaging','xray'],['skin','Skin','skin'],['messages','Messages','chat'],['fax','Fax','fax'],['memberships','Memberships','star'],['payments','Payments','payment']];
 
   const statusBadge=(s)=>{
     const map={draft:'badge-gray',signed:'badge-green',pending:'badge-yellow',transmitted:'badge-blue',sent:'badge-blue',active:'badge-green',cancelled:'badge-red',completed:'badge-green',failed:'badge-red',routine:'badge-gray',stat:'badge-red'};
@@ -966,6 +1008,10 @@ function PatientChart({token,patient,onBack,user}){
                 </button>
               );
             })()}
+            {/* Import records */}
+            <button className="btn btn-outline" title="Import external records (PDF or text)" onClick={()=>{setShowImportModal(true);setImportResult(null);setImportFile(null);setImportText('');}} style={{whiteSpace:'nowrap'}}>
+              ⬆ Import Records
+            </button>
             {/* Raw JSON export */}
             <button className="btn btn-outline" title="Export raw data as JSON" onClick={()=>{
               fetch(`/api/patients/${patient.id}/export`,{headers:{Authorization:`Bearer ${token}`}})
@@ -1397,6 +1443,165 @@ function PatientChart({token,patient,onBack,user}){
 
       {/* PRESCRIPTIONS TAB */}
       {tab==='rx'&&<PrescribingTab token={token} patient={patient} user={user}/>}
+
+      {/* MESSAGES TAB */}
+      {tab==='messages'&&(
+        <MessagesTab
+          token={token}
+          patient={patient}
+          messages={messages}
+          setMessages={setMessages}
+          toast={toast}
+        />
+      )}
+
+      {/* ── IMPORT MODAL ─────────────────────────────────────────────────── */}
+      {showImportModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.45)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20}}>
+          <div className="card" style={{width:'100%',maxWidth:560,maxHeight:'90vh',overflowY:'auto',padding:28}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <h2 style={{margin:0,fontSize:18,fontWeight:700}}>Import External Records</h2>
+              <button className="btn btn-outline btn-sm" onClick={()=>setShowImportModal(false)}>✕</button>
+            </div>
+            <p style={{color:'var(--text-3)',fontSize:13.5,marginBottom:18}}>
+              Upload a PDF or paste text from a referral, discharge summary, old chart, or lab report.
+              AI will read it and automatically file notes, labs, imaging, and medications into the correct tabs.
+            </p>
+
+            {/* PDF upload zone */}
+            <div
+              style={{border:'2px dashed var(--accent)',borderRadius:10,padding:24,textAlign:'center',
+                background:'var(--accent-bg)',cursor:'pointer',marginBottom:16}}
+              onClick={()=>importFileRef.current?.click()}
+            >
+              <div style={{fontSize:32,marginBottom:8}}>📄</div>
+              <div style={{fontWeight:600,color:'var(--accent)',marginBottom:4}}>
+                {importFile?importFile.name:'Click to upload a PDF'}
+              </div>
+              <div style={{fontSize:12,color:'var(--text-3)'}}>Supports PDF files up to ~20 pages</div>
+              <input ref={importFileRef} type="file" accept=".pdf" style={{display:'none'}}
+                onChange={e=>{setImportFile(e.target.files[0]||null);setImportText('');}}/>
+            </div>
+
+            <div style={{textAlign:'center',color:'var(--text-3)',fontSize:13,marginBottom:12}}>— or paste text —</div>
+
+            <textarea
+              style={{width:'100%',minHeight:140,padding:10,borderRadius:8,border:'1px solid var(--border)',
+                fontSize:13,resize:'vertical',fontFamily:'inherit',boxSizing:'border-box'}}
+              placeholder="Paste the text of a referral, discharge summary, or old chart note here…"
+              value={importText}
+              onChange={e=>{setImportText(e.target.value);setImportFile(null);}}
+            />
+
+            {importResult&&(
+              <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:14,marginTop:14}}>
+                <div style={{fontWeight:700,color:'#15803d',marginBottom:6}}>✅ Import complete</div>
+                <div style={{fontSize:13,color:'#166534'}}>{importResult.summary}</div>
+                <div style={{display:'flex',gap:12,marginTop:10,flexWrap:'wrap'}}>
+                  {[['Notes',importResult.filed.notes,'📋'],['Labs',importResult.filed.labs,'🧪'],['Imaging',importResult.filed.imaging,'🩻'],['Medications',importResult.filed.meds,'💊']].map(([l,n,e])=>(
+                    <div key={l} style={{background:'white',border:'1px solid #bbf7d0',borderRadius:6,padding:'6px 12px',fontSize:13,fontWeight:600}}>
+                      {e} {n} {l}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:'flex',gap:10,marginTop:18,justifyContent:'flex-end'}}>
+              <button className="btn btn-outline" onClick={()=>setShowImportModal(false)}>Close</button>
+              <button className="btn btn-primary" onClick={runImport} disabled={importing||(!importFile&&!importText.trim())}>
+                {importing?<><Spinner/> Analyzing…</>:'🤖 Import & File Records'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MESSAGES TAB
+// ══════════════════════════════════════════════════════════════════════════════
+function MessagesTab({token,patient,messages,setMessages,toast}){
+  const [body,setBody]=useState('');
+  const [sending,setSending]=useState(false);
+  const bottomRef=React.useRef();
+
+  useEffect(()=>{
+    bottomRef.current?.scrollIntoView({behavior:'smooth'});
+  },[messages]);
+
+  const sendMessage=async()=>{
+    if(!body.trim()){return;}
+    setSending(true);
+    try{
+      const m=await api('POST',`/api/patients/${patient.id}/messages`,{body},token);
+      if(m){setMessages(prev=>[...prev,m]);setBody('');}
+    }catch(e){toast(e.message,'error');}
+    setSending(false);
+  };
+
+  return(
+    <div>
+      <div className="card" style={{marginBottom:16,padding:'14px 18px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div>
+          <h3 style={{margin:0,fontSize:15,fontWeight:700}}>Secure Messages</h3>
+          <p style={{margin:0,fontSize:12.5,color:'var(--text-3)'}}>
+            Patient messages appear here and are forwarded to your cell via SMS. Your replies are shown in the patient portal.
+          </p>
+        </div>
+      </div>
+
+      {/* Message thread */}
+      <div style={{minHeight:220,marginBottom:14}}>
+        {messages.length===0&&(
+          <div className="card" style={{textAlign:'center',padding:40,color:'var(--text-3)'}}>
+            No messages yet. The patient can send you a message from their portal.
+          </div>
+        )}
+        {messages.map(m=>{
+          const isInbound=m.direction==='inbound';
+          return(
+            <div key={m.id} style={{display:'flex',justifyContent:isInbound?'flex-start':'flex-end',marginBottom:10}}>
+              <div style={{
+                maxWidth:'72%',padding:'10px 14px',borderRadius:12,fontSize:14,lineHeight:1.5,
+                background:isInbound?'white':'var(--accent)',
+                color:isInbound?'var(--text-1)':'white',
+                border:isInbound?'1px solid var(--border)':'none',
+                boxShadow:'0 1px 3px rgba(0,0,0,.08)'
+              }}>
+                <div>{m.body}</div>
+                <div style={{fontSize:11,marginTop:4,opacity:.65,textAlign:'right'}}>
+                  {isInbound?`${patient.first_name} (patient)`:'You'} · {m.created_at?.slice(0,16).replace('T',' ')}
+                  {m.sms_status==='failed'&&<span style={{color:'#ef4444',marginLeft:6}}>⚠ SMS failed</span>}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={bottomRef}/>
+      </div>
+
+      {/* Reply box */}
+      <div className="card" style={{padding:14}}>
+        <div style={{fontSize:12.5,color:'var(--text-3)',marginBottom:8}}>
+          Your reply will appear in the patient's portal.
+        </div>
+        <textarea
+          style={{width:'100%',minHeight:80,padding:10,borderRadius:8,border:'1px solid var(--border)',
+            fontSize:14,resize:'vertical',fontFamily:'inherit',boxSizing:'border-box'}}
+          placeholder="Type your reply…"
+          value={body}
+          onChange={e=>setBody(e.target.value)}
+          onKeyDown={e=>{if(e.key==='Enter'&&e.ctrlKey){sendMessage();}}}
+        />
+        <div style={{display:'flex',justifyContent:'flex-end',marginTop:10}}>
+          <button className="btn btn-primary" onClick={sendMessage} disabled={sending||!body.trim()}>
+            {sending?<Spinner/>:'Send Reply'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

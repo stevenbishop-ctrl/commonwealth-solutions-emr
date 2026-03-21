@@ -537,6 +537,47 @@ class AuditLog(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
 
 
+class PatientMessage(Base):
+    """
+    Secure patient↔provider messages with two-way SMS forwarding.
+    direction: 'inbound'  = patient → provider
+               'outbound' = provider → patient
+    """
+    __tablename__ = "patient_messages"
+    id            = Column(Integer, primary_key=True, index=True)
+    patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    direction     = Column(String, nullable=False)          # inbound | outbound
+    body          = Column(Text, nullable=False)
+    # SMS delivery tracking
+    sms_status    = Column(String, default="pending")       # pending|sent|delivered|failed|not_applicable
+    telnyx_msg_id = Column(String, nullable=True)           # Telnyx message ID for status tracking
+    # Read receipts
+    read_at       = Column(DateTime, nullable=True)         # when provider read inbound / patient read outbound
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class ImportedRecord(Base):
+    """
+    Tracks uploaded patient records (PDFs / text) and the AI-parsed filing results.
+    """
+    __tablename__ = "imported_records"
+    id            = Column(Integer, primary_key=True, index=True)
+    patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=False)
+    uploaded_by   = Column(Integer, ForeignKey("users.id"), nullable=False)
+    filename      = Column(String, default="")
+    source_type   = Column(String, default="pdf")           # pdf | text
+    raw_text      = Column(Text, default="")                # extracted text sent to AI
+    ai_summary    = Column(Text, default="")                # AI's summary of what was filed
+    # Counts of records created
+    notes_filed   = Column(Integer, default=0)
+    labs_filed    = Column(Integer, default=0)
+    imaging_filed = Column(Integer, default=0)
+    meds_filed    = Column(Integer, default=0)
+    status        = Column(String, default="pending")       # pending|complete|error
+    error_detail  = Column(Text, default="")
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
 class TrainingRecord(Base):
     """Workforce HIPAA training completion records — POL-HIPAA-001."""
     __tablename__ = "training_records"
