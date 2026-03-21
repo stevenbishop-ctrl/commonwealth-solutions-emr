@@ -533,15 +533,26 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # ── HTTPS Enforcement Middleware ──────────────────────────────────────────────
 class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
-    """Redirect all HTTP traffic to HTTPS in production (non-local) environments."""
+    """Redirect HTTP → HTTPS in production. Exempts internal/healthcheck traffic."""
     _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "testserver"}
+    # Paths Railway uses for healthchecks — must never be redirected
+    _EXEMPT_PATHS = {"/health", "/healthz", "/ping"}
 
     async def dispatch(self, request: Request, call_next):
+        # Always pass through healthcheck paths (Railway hits these over HTTP internally)
+        if request.url.path in self._EXEMPT_PATHS:
+            return await call_next(request)
         host = request.url.hostname or ""
-        if (request.url.scheme == "http"
-                and host not in self._LOCAL_HOSTS
-                and not host.startswith("192.168.")
-                and not host.startswith("10.")):
+        client_ip = (request.client.host if request.client else "") or ""
+        # Exempt local + RFC-1918 + RFC-6598 (100.64/10 — Railway's internal CGNAT range)
+        if (host in self._LOCAL_HOSTS
+                or host.startswith("192.168.")
+                or host.startswith("10.")
+                or host.startswith("100.64.")
+                or client_ip.startswith("100.64.")
+                or client_ip.startswith("10.")):
+            return await call_next(request)
+        if request.url.scheme == "http":
             https_url = str(request.url).replace("http://", "https://", 1)
             return RedirectResponse(url=https_url, status_code=301)
         return await call_next(request)
