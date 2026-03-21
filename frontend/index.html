@@ -842,6 +842,7 @@ function PatientChart({token,patient,onBack,user}){
   const [showFaxForm,setShowFaxForm]=useState(false);
   const [showMembershipForm,setShowMembershipForm]=useState(false);
   const [showSquareMembershipModal,setShowSquareMembershipModal]=useState(false);
+  const [showZapriteSubscriptionModal,setShowZapriteSubscriptionModal]=useState(false);
   const [showPaymentForm,setShowPaymentForm]=useState(false);
   const [showSquareModal,setShowSquareModal]=useState(false);
   const [showZapriteModal,setShowZapriteModal]=useState(false);
@@ -1426,9 +1427,13 @@ function PatientChart({token,patient,onBack,user}){
       {tab==='memberships'&&(
         <div>
           {showSquareMembershipModal&&<SquareMembershipModal token={token} patient={patient} onClose={()=>setShowSquareMembershipModal(false)} onSave={m=>{setMemberships([m,...memberships]);setShowSquareMembershipModal(false);toast('Subscription activated!');}}/>}
+          {showZapriteSubscriptionModal&&<ZapriteSubscriptionModal token={token} patient={patient} onClose={()=>setShowZapriteSubscriptionModal(false)} onSave={m=>{setMemberships([m,...memberships]);setShowZapriteSubscriptionModal(false);toast('Subscription activated via Zaprite!');}}/>}
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12,gap:8,flexWrap:'wrap'}}>
             <button className="btn btn-primary" style={{background:'#006aff'}} onClick={()=>setShowSquareMembershipModal(true)}>
               <span style={{fontSize:14}}>💳</span> Subscribe with Square
+            </button>
+            <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setShowZapriteSubscriptionModal(true)}>
+              <span style={{fontSize:14}}>⚡</span> Subscribe with Zaprite
             </button>
             <button className="btn btn-secondary" onClick={()=>setShowMembershipForm(true)}><Icon name="plus" size={15}/>Manual Membership</button>
           </div>
@@ -4332,6 +4337,223 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
               <div style={{color:'#78716c',marginBottom:20}}>{statusMsg}</div>
               <div style={{display:'flex',gap:8,justifyContent:'center'}}>
                 <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setStep('form')}>Try Again</button>
+                <button className="btn btn-secondary" onClick={onClose}>Close</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ZAPRITE SUBSCRIPTION MODAL  (DPC membership paid with Bitcoin / crypto)
+// ═══════════════════════════════════════════════════════════════════════════════
+function ZapriteSubscriptionModal({token,patient,onClose,onSave}){
+  const toast=useToast();
+  const [apiPlans,setApiPlans]=useState([]);
+  const [selectedPlan,setSelectedPlan]=useState(null);
+  const [cycle,setCycle]=useState('annual');
+  const [step,setStep]=useState('plan'); // plan | waiting | done | failed
+  const [loading,setLoading]=useState(false);
+  const [orderId,setOrderId]=useState(null);
+  const [checkoutUrl,setCheckoutUrl]=useState('');
+  const [statusMsg,setStatusMsg]=useState('Waiting for payment...');
+  const pollRef=useRef(null);
+
+  useEffect(()=>{
+    api('GET','/api/membership-plans',null,token).then(d=>{
+      if(d?.length){setApiPlans(d);setSelectedPlan(d[0]);}
+    }).catch(()=>{});
+  },[token]);
+
+  useEffect(()=>()=>{if(pollRef.current)clearInterval(pollRef.current);},[]);
+
+  const effectivePrice=selectedPlan?(
+    cycle==='annual'
+      ?(selectedPlan.price_annual||selectedPlan.price_monthly*12||0)
+      :(selectedPlan.price_monthly||parseFloat(((selectedPlan.price_annual||0)/12).toFixed(2))||0)
+  ):0;
+
+  const pollStatus=async(id)=>{
+    try{
+      const d=await api('GET',`/api/zaprite/order/${id}/status`,null,token);
+      if(!d) return;
+      if(d.status==='completed'){
+        clearInterval(pollRef.current);
+        // Record the membership
+        const monthlyPrice=cycle==='monthly'?effectivePrice:parseFloat(((selectedPlan.price_annual||effectivePrice)/12).toFixed(2));
+        const mem=await api('POST','/api/memberships',{
+          patient_id:patient.id,
+          plan_name:selectedPlan.name,
+          price_monthly:monthlyPrice,
+          price_annual:selectedPlan.price_annual||monthlyPrice*12,
+          billing_cycle:cycle,
+          notes:`Paid via Zaprite order ${id}`,
+        },token).catch(()=>null);
+        setStep('done');
+        onSave(mem||{plan_name:selectedPlan.name,price_monthly:monthlyPrice,billing_cycle:cycle,status:'active',start_date:new Date().toISOString()});
+      } else if(d.status==='abandoned'||d.status==='expired'){
+        clearInterval(pollRef.current);
+        setStep('failed');
+        setStatusMsg('Order expired — no payment received.');
+      } else {
+        const labels={PENDING:'Waiting for payment...',PROCESSING:'Payment detected, confirming...',UNDERPAID:'Partial payment received — waiting for remainder...'};
+        setStatusMsg(labels[d.zaprite_status]||'Waiting for payment...');
+      }
+    }catch(_){}
+  };
+
+  const submit=async e=>{
+    e.preventDefault();
+    if(!selectedPlan||effectivePrice<=0){toast('Select a plan','error');return;}
+    setLoading(true);
+    try{
+      const desc=`${selectedPlan.name} — ${cycle==='annual'?'Annual':'Monthly'} DPC Membership`;
+      const d=await api('POST','/api/zaprite/order',{
+        patient_id:patient.id,
+        amount:effectivePrice,
+        description:desc,
+      },token);
+      if(!d?.checkout_url){throw new Error('No checkout URL returned');}
+      setOrderId(d.order_id);
+      setCheckoutUrl(d.checkout_url);
+      window.open(d.checkout_url,'_blank');
+      setStep('waiting');
+      pollRef.current=setInterval(()=>pollStatus(d.order_id),10000);
+    }catch(e){toast(e.message,'error');}
+    setLoading(false);
+  };
+
+  return(
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{maxWidth:480}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:'24px 28px'}}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
+            <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
+              <span style={{fontSize:20,background:'#f7931a',borderRadius:6,padding:'2px 8px',color:'#fff',fontWeight:900}}>⚡</span>
+              Subscribe with Zaprite
+            </h2>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#a8a29e',lineHeight:1}}>✕</button>
+          </div>
+
+          {/* Step: plan selection */}
+          {step==='plan'&&(
+            <form onSubmit={submit}>
+              <div style={{marginBottom:14}}>
+                <label className="label">Patient</label>
+                <div style={{padding:'9px 12px',background:'var(--bg)',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+              </div>
+
+              {/* Billing cycle */}
+              <div style={{marginBottom:16}}>
+                <label className="label">Billing Cycle</label>
+                <div style={{display:'flex',gap:0,border:'1.5px solid var(--border)',borderRadius:8,overflow:'hidden',width:'fit-content'}}>
+                  {[['annual','Annual'],['monthly','Monthly']].map(([v,l])=>(
+                    <button key={v} type="button" onClick={()=>setCycle(v)}
+                      style={{padding:'7px 22px',fontSize:13,fontWeight:cycle===v?600:400,cursor:'pointer',border:'none',
+                        background:cycle===v?'#f7931a':'var(--surface)',
+                        color:cycle===v?'#fff':'var(--text-2)',transition:'all .15s'}}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Plan selector */}
+              {apiPlans.length>0?(
+                <div style={{marginBottom:16}}>
+                  <label className="label">Membership Plan</label>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    {apiPlans.map(p=>{
+                      const price=cycle==='annual'?(p.price_annual||p.price_monthly*12||0):(p.price_monthly||parseFloat(((p.price_annual||0)/12).toFixed(2))||0);
+                      const sel=selectedPlan?.id===p.id;
+                      return(
+                        <div key={p.id} onClick={()=>setSelectedPlan(p)} style={{
+                          padding:'10px 14px',borderRadius:8,cursor:'pointer',
+                          border:`2px solid ${sel?'#f7931a':'var(--border)'}`,
+                          background:sel?'#fff7ed':'var(--surface)',transition:'all .15s',
+                        }}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <span style={{fontWeight:600,fontSize:14}}>{p.name}</span>
+                            <span style={{fontWeight:700,fontSize:15,color:'#f7931a'}}>${price.toFixed(2)}</span>
+                          </div>
+                          <div style={{fontSize:12,color:'var(--text-3)',marginTop:2}}>
+                            {cycle==='annual'?'billed annually':'billed monthly'}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ):(
+                <div style={{marginBottom:16}}>
+                  <label className="label">Amount ($)</label>
+                  <input className="input" type="number" step="0.01" min="1" value={effectivePrice||''} readOnly
+                    placeholder="No plans configured — enter amount"/>
+                </div>
+              )}
+
+              <div style={{background:'#fff7ed',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#92400e'}}>
+                <strong>How it works:</strong> A Zaprite checkout page opens in a new tab. The patient pays with Bitcoin (on-chain or Lightning), USDT, USDC, or other crypto. The membership is activated automatically once payment is confirmed.
+              </div>
+
+              <div style={{display:'flex',gap:8}}>
+                <button className="btn btn-primary" style={{background:'#f7931a',flex:1}} type="submit" disabled={loading||!selectedPlan}>
+                  {loading?<Spinner/>:<><span style={{fontSize:14}}>⚡</span> Create Zaprite Order — ${effectivePrice.toFixed(2)}</>}
+                </button>
+                <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
+              </div>
+              <div style={{marginTop:10,textAlign:'center',fontSize:11,color:'#a8a29e'}}>
+                🔒 Powered by Zaprite · Bitcoin &amp; Lightning supported
+              </div>
+            </form>
+          )}
+
+          {/* Step: waiting for payment */}
+          {step==='waiting'&&(
+            <div style={{textAlign:'center',padding:'12px 0'}}>
+              <div style={{fontSize:48,marginBottom:12}}>⏳</div>
+              <div style={{fontWeight:700,fontSize:16,color:'#1c1917',marginBottom:8}}>Zaprite Checkout Opened</div>
+              <div style={{color:'#78716c',fontSize:14,marginBottom:16}}>{statusMsg}</div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:20,color:'#78716c',fontSize:13}}>
+                <Spinner/> Checking payment status every 10 seconds…
+              </div>
+              {checkoutUrl&&(
+                <a href={checkoutUrl} target="_blank" rel="noopener noreferrer"
+                  style={{display:'inline-block',marginBottom:20,color:'#f7931a',fontSize:13,textDecoration:'underline'}}>
+                  Reopen checkout page
+                </a>
+              )}
+              <br/>
+              <button className="btn btn-secondary" onClick={()=>{clearInterval(pollRef.current);onClose();}}>Cancel</button>
+            </div>
+          )}
+
+          {/* Step: payment confirmed */}
+          {step==='done'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>✅</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#2d8a5e',marginBottom:8}}>Subscription Activated!</div>
+              <div style={{color:'#78716c',marginBottom:4}}>
+                {selectedPlan?.name} — ${effectivePrice.toFixed(2)} received via Zaprite
+              </div>
+              <div style={{color:'#a8a29e',fontSize:13,marginBottom:20}}>
+                Membership is now active and recorded in the chart.
+              </div>
+              <button className="btn btn-success" onClick={onClose}>Done</button>
+            </div>
+          )}
+
+          {/* Step: failed / abandoned */}
+          {step==='failed'&&(
+            <div style={{textAlign:'center',padding:'24px 0'}}>
+              <div style={{fontSize:52,marginBottom:12}}>❌</div>
+              <div style={{fontWeight:700,fontSize:20,color:'#dc2626',marginBottom:8}}>Payment Failed</div>
+              <div style={{color:'#78716c',marginBottom:20}}>{statusMsg}</div>
+              <div style={{display:'flex',gap:8,justifyContent:'center'}}>
+                <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setStep('plan')}>Try Again</button>
                 <button className="btn btn-secondary" onClick={onClose}>Close</button>
               </div>
             </div>
