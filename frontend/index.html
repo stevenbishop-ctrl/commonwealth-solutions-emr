@@ -2191,9 +2191,10 @@ function SkinLesionsTab({token, patient, user}){
                 onUpdated={updated=>setLesions(lesions.map(l=>l.id===updated.id?updated:l))}
               />
             ):(
-              <div className="card" style={{textAlign:'center',padding:40,color:'var(--text-3)'}}>
-                <Icon name="skin" size={32}/><br/>
-                <span style={{fontSize:13,marginTop:8,display:'block'}}>Select a lesion to view its photo timeline and analysis</span>
+              <div className="card" style={{textAlign:'center',padding:48,color:'var(--text-3)',border:'2px dashed var(--border)'}}>
+                <div style={{fontSize:40,marginBottom:12}}>👈</div>
+                <div style={{fontWeight:600,fontSize:14,color:'var(--text-2)',marginBottom:6}}>Select a lesion</div>
+                <span style={{fontSize:13}}>Click any lesion on the left to view its photo timeline and run AI analysis</span>
               </div>
             )}
           </div>
@@ -2374,15 +2375,17 @@ function LesionDetail({token, patient, user, lesion, onEdit, onUpdated}){
             {lesion.first_noted&&<div style={{fontSize:12,color:'var(--text-4)',marginTop:2}}>First noted: {lesion.first_noted}</div>}
           </div>
           {isPhysician&&(
-            <div style={{display:'flex',gap:6,flexShrink:0,flexWrap:'wrap',justifyContent:'flex-end'}}>
-              <button className="btn btn-outline btn-sm" onClick={onEdit}><Icon name="edit" size={13}/>Edit</button>
+            <div style={{display:'flex',flexDirection:'column',gap:6,flexShrink:0,alignItems:'flex-end'}}>
               <input type="file" ref={fileRef} hidden accept="image/*" onChange={e=>uploadImage(e.target.files[0])}/>
-              <button className="btn btn-secondary btn-sm" onClick={()=>fileRef.current?.click()} disabled={uploading}>
-                {uploading?<Spinner/>:<><Icon name="camera" size={13}/>Add Photo</>}
-              </button>
+              <div style={{display:'flex',gap:6}}>
+                <button className="btn btn-outline btn-sm" onClick={onEdit}><Icon name="edit" size={13}/>Edit</button>
+                <button className="btn btn-secondary" onClick={()=>fileRef.current?.click()} disabled={uploading}>
+                  {uploading?<Spinner/>:<><Icon name="camera" size={15}/>Add Photo</>}
+                </button>
+              </div>
               {images.length>0&&(
-                <button className="btn btn-primary btn-sm" onClick={analyze} disabled={analyzing}>
-                  {analyzing?<Spinner/>:<>🔬 Analyze Changes</>}
+                <button className="btn btn-primary" style={{width:'100%'}} onClick={analyze} disabled={analyzing}>
+                  {analyzing?<><Spinner/> Analyzing…</>:<>🔬 Analyze Changes</>}
                 </button>
               )}
             </div>
@@ -2394,9 +2397,17 @@ function LesionDetail({token, patient, user, lesion, onEdit, onUpdated}){
       {loadingImgs?(
         <div style={{textAlign:'center',padding:32}}><Spinner/></div>
       ):images.length===0?(
-        <div className="card" style={{textAlign:'center',padding:36,color:'var(--text-3)'}}>
-          <Icon name="camera" size={28}/><br/>
-          <span style={{fontSize:13,marginTop:8,display:'block'}}>No photos yet. Click "Add Photo" to upload the first image.</span>
+        <div className="card" style={{textAlign:'center',padding:48,border:'2px dashed var(--accent)',background:'var(--accent-bg)',cursor:isPhysician?'pointer':'default'}}
+          onClick={()=>isPhysician&&fileRef.current?.click()}>
+          <div style={{fontSize:48,marginBottom:12}}>📷</div>
+          <div style={{fontWeight:700,fontSize:16,color:'var(--text-1)',marginBottom:6}}>No photos yet</div>
+          <div style={{fontSize:13,color:'var(--text-3)',marginBottom:isPhysician?20:0}}>Upload the first photo to begin serial monitoring</div>
+          {isPhysician&&(
+            <button className="btn btn-primary" style={{fontSize:15,padding:'10px 28px'}}
+              onClick={e=>{e.stopPropagation();fileRef.current?.click();}} disabled={uploading}>
+              {uploading?<Spinner/>:<><Icon name="camera" size={16}/>Upload First Photo</>}
+            </button>
+          )}
         </div>
       ):(
         <>
