@@ -16,7 +16,9 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     mfa_enabled = Column(Boolean, default=False)
     mfa_secret = Column(String, nullable=True)
+    mfa_required = Column(Boolean, default=False)  # Force MFA before clinical access
     password_changed_at = Column(DateTime, nullable=True)
+    token_version = Column(Integer, default=0)      # Invalidates all prior tokens on pw change
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

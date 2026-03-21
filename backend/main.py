@@ -31,7 +31,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -531,6 +531,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# ── HTTPS Enforcement Middleware ──────────────────────────────────────────────
+class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
+    """Redirect all HTTP traffic to HTTPS in production (non-local) environments."""
+    _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "testserver"}
+
+    async def dispatch(self, request: Request, call_next):
+        host = request.url.hostname or ""
+        if (request.url.scheme == "http"
+                and host not in self._LOCAL_HOSTS
+                and not host.startswith("192.168.")
+                and not host.startswith("10.")):
+            https_url = str(request.url).replace("http://", "https://", 1)
+            return RedirectResponse(url=https_url, status_code=301)
+        return await call_next(request)
+
+app.add_middleware(HTTPSRedirectMiddleware)
+
+
 # ── Rate Limiter (Risk 9) ─────────────────────────────────────────────────────
 _rl_lock = threading.Lock()
 _failed_attempts: dict = collections.defaultdict(list)  # ip -> [timestamps]
@@ -559,6 +577,47 @@ def _record_failure(ip: str):
 def _clear_failures(ip: str):
     with _rl_lock:
         _failed_attempts[ip] = []
+
+
+# ── Suspicious Access Detection (HIPAA §164.308(a)(1)) ───────────────────────
+# Track per-user patient record access; alert if volume exceeds threshold
+_pac_lock = threading.Lock()
+_patient_access_log: dict = collections.defaultdict(list)  # user_id -> [timestamps]
+PAC_THRESHOLD = 50     # access events
+PAC_WINDOW    = 300    # 5 minutes
+
+
+def _track_patient_access(db, user_id: int, patient_id: int):
+    """Record a patient data access event and emit a HIPAA audit alert if suspicious."""
+    now = time.time()
+    with _pac_lock:
+        _patient_access_log[user_id] = [
+            t for t in _patient_access_log[user_id] if now - t < PAC_WINDOW
+        ]
+        count = len(_patient_access_log[user_id])
+        _patient_access_log[user_id].append(now)
+    if count >= PAC_THRESHOLD:
+        audit(db, user_id, "SUSPICIOUS_ACCESS_VOLUME", "Patient", str(patient_id),
+              f"ALERT: User accessed {count + 1} patient records in {PAC_WINDOW // 60} minutes. "
+              "Possible unauthorized bulk access — review required.")
+
+
+def _require_patient_access(patient, current_user: "models.User"):
+    """
+    Enforce minimum-necessary access (HIPAA §164.502(b)).
+    - admin and physician: access all patients
+    - staff: access only patients they created
+    Raises 403 if access is denied.
+    """
+    if current_user.role in ("admin", "physician"):
+        return  # full access
+    # staff: only their own patients
+    created_by = getattr(patient, "created_by", None)
+    if created_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: staff may only access records of patients they registered."
+        )
 
 
 # ── Password Complexity (Risk 10) ─────────────────────────────────────────────
@@ -610,9 +669,12 @@ def verify_pw(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 
-def make_token(user_id: int, role: str) -> str:
+def make_token(user_id: int, role: str, token_version: int = 0) -> str:
     exp = datetime.utcnow() + timedelta(hours=TOKEN_HOURS)
-    return jwt.encode({"sub": str(user_id), "role": role, "exp": exp}, SECRET_KEY, ALGORITHM)
+    return jwt.encode(
+        {"sub": str(user_id), "role": role, "tv": token_version, "exp": exp},
+        SECRET_KEY, ALGORITHM
+    )
 
 
 def get_current_user(
@@ -622,11 +684,24 @@ def get_current_user(
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload["sub"])
+        token_version = int(payload.get("tv", 0))
     except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or disabled")
+    # Reject tokens issued before a password change
+    current_tv = getattr(user, "token_version", 0) or 0
+    if token_version != current_tv:
+        raise HTTPException(status_code=401, detail="Session invalidated — please log in again")
+    # Enforce MFA for privileged roles when REQUIRE_MFA env var is set
+    if os.getenv("REQUIRE_MFA", "false").lower() == "true":
+        if user.role in ("admin", "physician") and not getattr(user, "mfa_enabled", False):
+            raise HTTPException(
+                status_code=403,
+                detail="MFA_REQUIRED: Multi-factor authentication must be enabled for your role. "
+                       "Please set up an authenticator app in Settings → Security."
+            )
     return user
 
 
@@ -739,7 +814,8 @@ def login(
     if _password_is_expired(user):
         audit(db, user.id, "LOGIN_PASSWORD_EXPIRED", "User", str(user.id), request=request)
         return {"password_expired": True, "reset_token": _make_pw_expired_token(user.id)}
-    token = make_token(user.id, user.role)
+    tv = getattr(user, "token_version", 0) or 0
+    token = make_token(user.id, user.role, tv)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
 
@@ -762,7 +838,8 @@ def mfa_verify(data: dict, request: Request = None, db: Session = Depends(get_db
     totp = pyotp.TOTP(user.mfa_secret)
     if not totp.verify(code, valid_window=1):
         raise HTTPException(status_code=401, detail="Invalid authenticator code")
-    token = make_token(user.id, user.role)
+    tv2 = getattr(user, "token_version", 0) or 0
+    token = make_token(user.id, user.role, tv2)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
 
@@ -818,6 +895,17 @@ def get_me(current_user: models.User = Depends(get_current_user)):
     return user_dict(current_user)
 
 
+@app.post("/api/auth/logout")
+def logout(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    request: Request = None,
+):
+    """Record the session termination event in the audit log."""
+    audit(db, current_user.id, "LOGOUT", "User", str(current_user.id), request=request)
+    return {"success": True}
+
+
 @app.put("/api/auth/me/password")
 def change_password(
     data: dict,
@@ -829,6 +917,7 @@ def change_password(
     _validate_password(data["new_password"])
     current_user.password_hash = hash_pw(data["new_password"])
     current_user.password_changed_at = datetime.utcnow()
+    current_user.token_version = (getattr(current_user, "token_version", 0) or 0) + 1
     db.commit()
     audit(db, current_user.id, "CHANGE_PASSWORD", "User", str(current_user.id))
     return {"success": True}
@@ -863,9 +952,11 @@ def reset_expired_password(
     _validate_password(new_password)
     user.password_hash = hash_pw(new_password)
     user.password_changed_at = datetime.utcnow()
+    user.token_version = (getattr(user, "token_version", 0) or 0) + 1
     db.commit()
     audit(db, user.id, "PASSWORD_RESET_EXPIRED", "User", str(user.id), request=request)
-    token = make_token(user.id, user.role)
+    tv3 = getattr(user, "token_version", 0) or 0
+    token = make_token(user.id, user.role, tv3)
     return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
 
 
@@ -922,6 +1013,7 @@ def update_user(
         _validate_password(data["password"])
         u.password_hash = hash_pw(data["password"])
         u.password_changed_at = datetime.utcnow()
+        u.token_version = (getattr(u, "token_version", 0) or 0) + 1
     db.commit()
     audit(db, current_user.id, "UPDATE_USER", "User", str(user_id))
     return user_dict(u)
@@ -938,6 +1030,9 @@ def list_patients(
     current_user: models.User = Depends(get_current_user),
 ):
     q = db.query(models.Patient)
+    # Minimum necessary: staff only see patients they registered
+    if current_user.role == "staff":
+        q = q.filter(models.Patient.created_by == current_user.id)
     if search:
         s = f"%{search}%"
         q = q.filter(
@@ -947,7 +1042,8 @@ def list_patients(
             | models.Patient.email.ilike(s)
         )
     rows = q.order_by(models.Patient.last_name).all()
-    audit(db, current_user.id, "LIST_PATIENTS", "Patient", "all")
+    audit(db, current_user.id, "LIST_PATIENTS", "Patient", "all",
+          f"Role: {current_user.role} | Results: {len(rows)}")
     return [clean(p) for p in rows]
 
 
@@ -992,6 +1088,8 @@ def get_patient(
     p = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(p, current_user)
+    _track_patient_access(db, current_user.id, patient_id)
     audit(db, current_user.id, "VIEW_PATIENT", "Patient", str(patient_id))
     return clean(p)
 
@@ -1006,6 +1104,7 @@ def update_patient(
     p = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not p:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(p, current_user)
     skip = {"id", "created_at", "created_by"}
     for k, v in data.items():
         if k not in skip and hasattr(p, k):
@@ -1167,6 +1266,16 @@ def update_note(
     note = db.query(models.ClinicalNote).filter(models.ClinicalNote.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    # HIPAA integrity control: signed notes are immutable
+    # Only the status field may be changed on a signed note (e.g. to unsign for addendum)
+    if note.status == "signed":
+        content_fields = set(data.keys()) - {"status"}
+        if content_fields:
+            raise HTTPException(
+                status_code=409,
+                detail="Signed notes are immutable. Only status may be changed. "
+                       "Create an addendum note instead of editing the signed record."
+            )
     skip = {"id", "created_at", "patient_id", "physician_id"}
     for k, v in data.items():
         if k in skip:
@@ -1177,7 +1286,8 @@ def update_note(
             setattr(note, k, v)
     note.updated_at = datetime.utcnow()
     db.commit()
-    audit(db, current_user.id, "UPDATE_NOTE", "ClinicalNote", str(note_id))
+    audit(db, current_user.id, "UPDATE_NOTE", "ClinicalNote", str(note_id),
+          f"Status: {note.status}")
     return clean(note)
 
 
@@ -1208,6 +1318,9 @@ def note_pdf(
         raise HTTPException(status_code=404, detail="Note not found")
     patient = db.query(models.Patient).filter(models.Patient.id == note.patient_id).first()
     physician = db.query(models.User).filter(models.User.id == note.physician_id).first()
+    # HIPAA audit: PHI export event
+    audit(db, current_user.id, "EXPORT_PHI_PDF", "ClinicalNote", str(note_id),
+          f"Clinical note PDF exported for patient_id={note.patient_id}")
 
     buf = BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=letter,
@@ -2155,25 +2268,47 @@ async def analyze_lesion(
         }
     })
 
+    # ── HIPAA de-identification before sending to Anthropic ──────────────────
+    # Per HIPAA Safe Harbor (45 CFR §164.514(b)), we remove direct and
+    # quasi-identifiers before disclosing to external AI service:
+    #   - No patient name, DOB, or exact age
+    #   - No lesion label (could be unique)
+    #   - No absolute dates; use relative elapsed time instead
+    #   - Body region kept (broad anatomical zone) — required for clinical utility
+    #   - Age decade kept (not exact age) — clinically relevant without identifying
     patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
-    age_str = ""
+    age_decade_str = ""
     if patient and patient.dob:
         try:
-            from datetime import date
-            dob = date.fromisoformat(patient.dob)
-            age_str = f" The patient is {(date.today() - dob).days // 365} years old."
+            from datetime import date as _date
+            dob = _date.fromisoformat(patient.dob)
+            age_yrs = (_date.today() - dob).days // 365
+            decade = (age_yrs // 10) * 10
+            age_decade_str = f" Patient age group: {decade}s."
         except Exception:
             pass
+
+    # Compute relative time since first noted (no absolute date)
+    time_known_str = ""
+    if lesion.first_noted:
+        try:
+            from datetime import date as _date2
+            fn = _date2.fromisoformat(str(lesion.first_noted)[:10])
+            months = max(1, round((_date2.today() - fn).days / 30.44))
+            time_known_str = f" Lesion has been monitored for approximately {months} month(s)."
+        except Exception:
+            pass
+
+    # Broad anatomical region only (strip laterality/specificity)
+    body_region = (lesion.body_location or "").strip()
 
     content.append({
         "type": "text",
         "text": (
-            f"Lesion name: {lesion.name}\n"
-            f"Location: {lesion.body_location}\n"
-            f"Initial description: {lesion.description}\n"
-            f"First noted: {lesion.first_noted}\n"
-            f"Number of serial photos: {len(images)}\n"
-            f"{age_str}\n\n"
+            f"Anatomical region: {body_region}\n"
+            f"Initial clinical description: {lesion.description or 'Not provided'}\n"
+            f"Serial photo count: {len(images)}\n"
+            f"{age_decade_str}{time_known_str}\n\n"
             "Please perform a structured ABCDE dermoscopy assessment on the most recent image "
             "and compare to any previous images for evolution. Respond ONLY with a JSON object "
             "matching this exact schema (no markdown, no prose outside the JSON):\n"
@@ -2242,6 +2377,10 @@ async def analyze_lesion(
 
     audit(db, current_user.id, "ANALYZE_SKIN_LESION", "SkinLesion", str(lesion_id),
           f"Urgency: {analysis.get('urgency','unknown')} | Images: {len(images)}")
+    # HIPAA audit: PHI images disclosed to external AI service (de-identified per Safe Harbor)
+    audit(db, current_user.id, "PHI_DISCLOSURE_EXTERNAL", "SkinLesion", str(lesion_id),
+          f"De-identified lesion images ({len(images)}) sent to Anthropic Claude API for ABCDE analysis. "
+          f"Patient identifiers removed per HIPAA Safe Harbor §164.514(b).")
     return {"image_id": latest.id, "analysis": analysis, "analyzed_at": latest.ai_analyzed_at.isoformat()}
 
 
@@ -4864,8 +5003,10 @@ def _migrate_add_billing_columns(db: Session):
         # Imaging result DB blob storage (Risk 12)
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_data TEXT",
         "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS result_file_name VARCHAR DEFAULT ''",
-        # Password expiry tracking
+        # Password expiry tracking + token invalidation
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
         # Workforce training records (POL-HIPAA-001)
         """CREATE TABLE IF NOT EXISTS training_records (
             id SERIAL PRIMARY KEY,

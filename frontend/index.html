@@ -5845,7 +5845,14 @@ function App(){
     localStorage.setItem('mf_token',t);
     localStorage.setItem('mf_user',JSON.stringify(u));
   };
-  const logout=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+  const logout=async()=>{
+    // Audit the session termination before clearing state
+    if(token){
+      try{ await api('POST','/api/auth/logout',{},token); }catch(e){}
+    }
+    setToken(null);setUser(null);
+    localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');
+  };
 
   if(!token||!user) return <LoginPage onLogin={login}/>;
 
@@ -5921,6 +5928,13 @@ function App(){
           <span style={{color:'#fff',fontWeight:700}}>MedFlow EMR</span>
         </div>
         <style>{`@media(max-width:768px){#mobile-header{display:flex!important;}}`}</style>
+        {/* HIPAA MFA enforcement banner for privileged roles without MFA */}
+        {user&&(user.role==='admin'||user.role==='physician')&&!user.mfa_enabled&&(
+          <div style={{background:'#7c2d12',color:'#fff',padding:'10px 24px',fontSize:13,display:'flex',alignItems:'center',gap:10,borderBottom:'2px solid #dc2626'}}>
+            <span style={{fontSize:16}}>🔐</span>
+            <span><strong>Security Alert:</strong> Multi-factor authentication is required for your role. Please enable it in <strong>Settings → Security → Two-Factor Auth</strong> to maintain compliance.</span>
+          </div>
+        )}
         <div style={{padding:24,maxWidth:1200,margin:'0 auto'}}>
           {renderPage()}
         </div>
