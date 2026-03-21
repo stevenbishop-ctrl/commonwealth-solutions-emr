@@ -10,8 +10,21 @@ from database import SessionLocal, engine, Base
 import models
 import bcrypt
 from datetime import datetime
+from sqlalchemy import text
 
 Base.metadata.create_all(bind=engine)
+
+# ── Schema migrations (safe to run on every deploy) ─────────────────────────
+_migrations = [
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
+]
+with engine.connect() as _conn:
+    for _sql in _migrations:
+        _conn.execute(text(_sql))
+    _conn.commit()
+print("✅ Schema migrations applied.")
+
 db = SessionLocal()
 
 # ── Admin user ──────────────────────────────────────────────────────────────
