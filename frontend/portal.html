@@ -507,10 +507,12 @@ function PortalMessagesTab({token}) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [providerInfo, setProviderInfo] = useState(null);
   const bottomRef = React.useRef();
 
   useEffect(() => {
     api('GET', '/portal/messages', null, token).then(setMessages).catch(() => setMessages([]));
+    api('GET', '/portal/provider-info', null, token).then(setProviderInfo).catch(() => {});
   }, [token]);
 
   useEffect(() => {
@@ -534,6 +536,12 @@ function PortalMessagesTab({token}) {
         <p style={{margin:'4px 0 0',fontSize:12.5,color:'#64748b'}}>
           Messages are private and go directly to your care team. Replies will appear here.
         </p>
+        {providerInfo?.sms_number && (
+          <div style={{marginTop:10,background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#166534'}}>
+            📱 <b>Text your provider directly:</b> Text <b>{providerInfo.sms_number}</b> from your phone for a faster response.
+            Messages sent by text are also filed in your chart.
+          </div>
+        )}
       </div>
 
       <div style={{minHeight:200,marginBottom:14}}>

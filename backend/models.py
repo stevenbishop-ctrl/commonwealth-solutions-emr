@@ -19,6 +19,9 @@ class User(Base):
     mfa_required = Column(Boolean, default=False)  # Force MFA before clinical access
     password_changed_at = Column(DateTime, nullable=True)
     token_version = Column(Integer, default=0)      # Invalidates all prior tokens on pw change
+    # Per-provider SMS routing
+    telnyx_sms_number = Column(String, default="")  # Telnyx number patients text for this provider (E.164)
+    cell_phone        = Column(String, default="")  # Provider's personal cell — messages forward here
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -560,6 +563,7 @@ class PatientMessage(Base):
     patient_id    = Column(Integer, ForeignKey("patients.id"), nullable=False)
     direction     = Column(String, nullable=False)          # inbound | outbound
     body          = Column(Text, nullable=False)
+    provider_id   = Column(Integer, ForeignKey("users.id"), nullable=True)  # which provider this thread belongs to
     # SMS delivery tracking
     sms_status    = Column(String, default="pending")       # pending|sent|delivered|failed|not_applicable
     telnyx_msg_id = Column(String, nullable=True)           # Telnyx message ID for status tracking

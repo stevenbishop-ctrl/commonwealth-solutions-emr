@@ -6140,16 +6140,21 @@ PHYSICIAN_CELL    = os.getenv("PHYSICIAN_CELL_PHONE", "")   # E.164, e.g. +12145
 TELNYX_SMS_NUMBER = os.getenv("TELNYX_SMS_NUMBER", "")      # Your Telnyx SMS-capable number
 
 
-def _send_sms(to: str, body: str) -> Optional[str]:
-    """Send an SMS via Telnyx. Returns message ID or None on failure."""
-    api_key = os.getenv("TELNYX_API_KEY", "")
-    if not api_key or not TELNYX_SMS_NUMBER or not to:
+def _send_sms(to: str, body: str, from_number: str = None) -> Optional[str]:
+    """Send an SMS via Telnyx. Returns message ID or None on failure.
+
+    ``from_number`` should be the provider's dedicated Telnyx number (E.164).
+    Falls back to the global TELNYX_SMS_NUMBER env-var when not supplied.
+    """
+    api_key  = os.getenv("TELNYX_API_KEY", "")
+    from_num = from_number or TELNYX_SMS_NUMBER
+    if not api_key or not from_num or not to:
         return None
     try:
         resp = httpx.post(
             "https://api.telnyx.com/v2/messages",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"from": TELNYX_SMS_NUMBER, "to": to, "text": body},
+            json={"from": from_num, "to": to, "text": body},
             timeout=10,
         )
         resp.raise_for_status()
@@ -6206,13 +6211,16 @@ def send_message_to_patient(
     telnyx_mid = None
 
     # Send SMS to patient's phone if they have consent and a phone number on file
+    # Send from this provider's dedicated Telnyx number so replies route back correctly
     if patient.sms_consent and patient.phone:
-        sms_text = f"[Valiant DPC] {body}"
-        telnyx_mid = _send_sms(patient.phone, sms_text)
-        sms_status = "sent" if telnyx_mid else "failed"
+        sms_text    = f"[Valiant DPC] {body}"
+        from_num    = getattr(current_user, "telnyx_sms_number", None) or TELNYX_SMS_NUMBER
+        telnyx_mid  = _send_sms(patient.phone, sms_text, from_number=from_num)
+        sms_status  = "sent" if telnyx_mid else "failed"
 
     msg = models.PatientMessage(
         patient_id=patient_id,
+        provider_id=current_user.id,
         direction="outbound",
         body=body,
         sms_status=sms_status,
@@ -6253,7 +6261,15 @@ def sms_forward_message(
         f"(PT#{patient_id}):\n\n{msg.body}\n\n"
         f"Reply to this number to respond to the patient."
     )
-    mid = _send_sms(PHYSICIAN_CELL, sms_body)
+    # Route to the provider who owns the message thread, else fall back to current user
+    dest_provider = None
+    if msg.provider_id:
+        dest_provider = db.query(models.User).filter(models.User.id == msg.provider_id).first()
+    dest_provider = dest_provider or current_user
+
+    dest_cell  = getattr(dest_provider, "cell_phone", "") or PHYSICIAN_CELL
+    from_num   = getattr(dest_provider, "telnyx_sms_number", "") or TELNYX_SMS_NUMBER
+    mid = _send_sms(dest_cell, sms_body, from_number=from_num) if dest_cell else None
     if mid:
         msg.sms_status = "sent"
         msg.telnyx_msg_id = mid
@@ -6279,6 +6295,79 @@ def unread_message_count(
 
 
 # ── Patient portal — messaging ────────────────────────────────────────────────
+
+def _get_patient_provider(patient: models.Patient, db) -> Optional[models.User]:
+    """Return the provider best associated with this patient.
+
+    Priority:
+    1. The provider on the most recent PatientMessage thread
+    2. The provider on the most recent appointment
+    3. The User who created the patient record (if role == physician)
+    4. The first active physician in the DB
+    """
+    # 1. Most recent message thread
+    recent_msg = (
+        db.query(models.PatientMessage)
+        .filter(
+            models.PatientMessage.patient_id == patient.id,
+            models.PatientMessage.provider_id != None,
+        )
+        .order_by(models.PatientMessage.created_at.desc())
+        .first()
+    )
+    if recent_msg and recent_msg.provider_id:
+        p = db.query(models.User).filter(models.User.id == recent_msg.provider_id).first()
+        if p:
+            return p
+
+    # 2. Most recent appointment
+    recent_appt = (
+        db.query(models.Appointment)
+        .filter(models.Appointment.patient_id == patient.id)
+        .order_by(models.Appointment.created_at.desc())
+        .first()
+    )
+    if recent_appt and recent_appt.provider_id:
+        p = db.query(models.User).filter(models.User.id == recent_appt.provider_id).first()
+        if p:
+            return p
+
+    # 3. Created-by user if they are a physician
+    if patient.created_by:
+        p = db.query(models.User).filter(
+            models.User.id == patient.created_by,
+            models.User.role == "physician",
+        ).first()
+        if p:
+            return p
+
+    # 4. First active physician
+    return (
+        db.query(models.User)
+        .filter(models.User.role == "physician", models.User.is_active == True)
+        .order_by(models.User.id)
+        .first()
+    )
+
+
+@app.get("/portal/provider-info")
+def portal_provider_info(
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """Return safe provider contact info for the patient's portal.
+
+    Only exposes the Telnyx SMS number (so patients know which number to text)
+    and the provider's display name. No PHI about other patients is disclosed.
+    """
+    provider = _get_patient_provider(patient, db)
+    if not provider:
+        return {"provider_name": "Your Care Team", "sms_number": TELNYX_SMS_NUMBER or None}
+    return {
+        "provider_name": provider.full_name,
+        "sms_number": provider.telnyx_sms_number or TELNYX_SMS_NUMBER or None,
+    }
+
 
 @app.get("/portal/messages")
 def portal_get_messages(
@@ -6324,19 +6413,27 @@ def portal_send_message(
     db.commit()
     db.refresh(msg)
 
-    # Forward to physician via SMS
-    sms_body = (
-        f"[Valiant DPC] New message from {patient.first_name} {patient.last_name} "
-        f"(PT#{patient.id}):\n\n{body}\n\n"
-        f"Reply to this number to respond to the patient."
-    )
-    mid = _send_sms(PHYSICIAN_CELL, sms_body)
-    msg.sms_status = "sent" if mid else "failed"
-    if mid:
-        msg.telnyx_msg_id = mid
+    # Forward to the patient's assigned provider via SMS
+    provider   = _get_patient_provider(patient, db)
+    dest_cell  = (getattr(provider, "cell_phone", "") if provider else "") or PHYSICIAN_CELL
+    from_num   = (getattr(provider, "telnyx_sms_number", "") if provider else "") or TELNYX_SMS_NUMBER
+
+    if dest_cell:
+        sms_body = (
+            f"[Valiant DPC] Portal msg from {patient.first_name} {patient.last_name} "
+            f"(PT#{patient.id}):\n\n{body}\n\n"
+            f"Reply to this number to respond to the patient."
+        )
+        mid = _send_sms(dest_cell, sms_body, from_number=from_num)
+        msg.sms_status = "sent" if mid else "failed"
+        if mid:
+            msg.telnyx_msg_id = mid
+        if provider:
+            msg.provider_id = provider.id
     db.commit()
 
-    audit(db, None, "PORTAL_SEND_MESSAGE", "Patient", str(patient.id), request=request)
+    audit(db, None, "PORTAL_SEND_MESSAGE", "Patient", str(patient.id), request=request,
+          details=f"provider_id={provider.id if provider else 'none'}")
     return clean(msg)
 
 
@@ -6485,29 +6582,79 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     if not body_text or not from_number:
         return {"ok": True, "ignored": "empty body or sender"}
 
-    # ── Physician reply → file as outbound to most recent patient thread ──────
-    if PHYSICIAN_CELL and from_number == PHYSICIAN_CELL:
-        # Find the most recent inbound patient message to identify the patient
+    # ─────────────────────────────────────────────────────────────────────────
+    # Normalize helper
+    def _norm(num: str) -> str:
+        d = re.sub(r"\D", "", num)
+        if len(d) == 10:
+            d = "1" + d
+        return "+" + d
+
+    # ── Identify the provider who owns the Telnyx number that received the SMS ─
+    # Each provider has a unique telnyx_sms_number; match on it (try both raw &
+    # normalized forms to be safe).
+    to_norm = _norm(to_number) if to_number else ""
+    provider = None
+    if to_number or to_norm:
+        provider = (
+            db.query(models.User)
+            .filter(
+                models.User.telnyx_sms_number.in_(
+                    [t for t in [to_number, to_norm] if t]
+                )
+            )
+            .first()
+        )
+
+    # ── Provider reply path: from_number matches a provider's cell_phone ─────
+    # A provider replies from their personal cell → the message comes back to
+    # their Telnyx number → we file it as outbound and forward to the patient.
+    replying_provider = (
+        db.query(models.User)
+        .filter(models.User.cell_phone != "")
+        .filter(
+            models.User.cell_phone.in_(
+                [f for f in [from_number, _norm(from_number)] if f]
+            )
+        )
+        .first()
+    )
+
+    if replying_provider:
+        # Find the most recent inbound message for any patient in this provider's thread
         recent = (
             db.query(models.PatientMessage)
-            .filter(models.PatientMessage.direction == "inbound")
+            .filter(
+                models.PatientMessage.direction == "inbound",
+                models.PatientMessage.provider_id == replying_provider.id,
+            )
             .order_by(models.PatientMessage.created_at.desc())
             .first()
         )
+        # Fallback: if no provider_id-tagged messages, use any recent inbound on their Telnyx number
+        if not recent and provider:
+            recent = (
+                db.query(models.PatientMessage)
+                .filter(models.PatientMessage.direction == "inbound")
+                .order_by(models.PatientMessage.created_at.desc())
+                .first()
+            )
         if recent:
-            # Look up the patient to get their phone number and consent status
             pt = db.query(models.Patient).filter(models.Patient.id == recent.patient_id).first()
             sms_status = "not_applicable"
             telnyx_mid = None
 
             if pt and pt.sms_consent and pt.phone:
-                # Forward physician's reply back to patient's phone
-                fwd_body = f"[Valiant DPC] {body_text}"
-                telnyx_mid = _send_sms(pt.phone, fwd_body)
+                # Send from the provider's Telnyx number so the patient sees
+                # the same number they originally texted
+                from_num   = getattr(replying_provider, "telnyx_sms_number", None) or TELNYX_SMS_NUMBER
+                fwd_body   = f"[Valiant DPC] {body_text}"
+                telnyx_mid = _send_sms(pt.phone, fwd_body, from_number=from_num)
                 sms_status = "sent" if telnyx_mid else "failed"
 
             reply = models.PatientMessage(
                 patient_id=recent.patient_id,
+                provider_id=replying_provider.id,
                 direction="outbound",
                 body=body_text,
                 sms_status=sms_status,
@@ -6515,38 +6662,37 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
             )
             db.add(reply)
             db.commit()
-            audit(db, None, "SMS_PHYSICIAN_REPLY", "Patient", str(recent.patient_id),
-                  details=f"Physician SMS reply filed and forwarded to patient; sms_status={sms_status}")
+            audit(db, replying_provider.id, "SMS_PHYSICIAN_REPLY", "Patient", str(recent.patient_id),
+                  details=f"Provider {replying_provider.id} SMS reply filed; sms_status={sms_status}")
             return {"ok": True, "filed_to_patient": recent.patient_id}
         return {"ok": True, "ignored": "no recent patient thread to reply to"}
 
     # ── Inbound from patient — normalize phone and look them up ──────────────
-    # Normalize: strip non-digits then re-format to E.164 (+1XXXXXXXXXX for US)
-    digits = re.sub(r"\D", "", from_number)
-    if len(digits) == 10:
-        digits = "1" + digits
-    normalized = "+" + digits
+    from_norm = _norm(from_number)
+    from_10   = re.sub(r"\D", "", from_number)[-10:]
 
-    # Try exact match first, then normalized
     patient = (
         db.query(models.Patient)
         .filter(
-            models.Patient.phone.in_([from_number, normalized,
-                                       from_number.replace("+1", ""), digits[-10:]])
+            models.Patient.phone.in_(
+                [f for f in [from_number, from_norm, from_norm.replace("+1", ""), from_10] if f]
+            )
         )
         .first()
     )
 
     if not patient:
         # Unknown number — reply and audit, but do NOT expose patient info
-        _send_sms(from_number, _SMS_NOT_FOUND)
+        _send_sms(from_number, _SMS_NOT_FOUND,
+                  from_number=(provider.telnyx_sms_number if provider else None))
         audit(db, None, "SMS_UNKNOWN_SENDER", "Webhook", "telnyx_sms",
               details=f"Inbound SMS from unrecognized number (last4={from_number[-4:]})")
         return {"ok": True, "ignored": "no matching patient"}
 
     # ── Consent gate ─────────────────────────────────────────────────────────
     if not patient.sms_consent:
-        _send_sms(from_number, _SMS_NO_CONSENT)
+        _send_sms(from_number, _SMS_NO_CONSENT,
+                  from_number=(provider.telnyx_sms_number if provider else None))
         audit(db, None, "SMS_NO_CONSENT", "Patient", str(patient.id),
               details="Inbound SMS blocked — sms_consent not granted")
         return {"ok": True, "ignored": "patient has not consented to SMS"}
@@ -6560,6 +6706,7 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
 
     msg = models.PatientMessage(
         patient_id=patient.id,
+        provider_id=provider.id if provider else None,
         direction="inbound",
         body=body_text,
         sms_status="delivered",
@@ -6569,20 +6716,33 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     db.refresh(msg)
 
     audit(db, None, "SMS_PATIENT_MESSAGE", "Patient", str(patient.id),
-          details=f"Inbound SMS from patient; msg_id={msg.id}")
+          details=f"Inbound SMS from patient; msg_id={msg.id}; provider_id={provider.id if provider else 'unknown'}")
 
-    # ── Send disclaimer on first message ──────────────────────────────────────
+    # ── Send disclaimer on first message (from provider's Telnyx number) ─────
+    telnyx_from = (provider.telnyx_sms_number if provider else None) or TELNYX_SMS_NUMBER
     if is_first_message:
-        _send_sms(from_number, _SMS_DISCLAIMER)
+        _send_sms(from_number, _SMS_DISCLAIMER, from_number=telnyx_from)
 
-    # ── Forward to physician (patient has consented — include content) ────────
-    if PHYSICIAN_CELL:
+    # ── Forward to provider's cell phone ─────────────────────────────────────
+    if provider and getattr(provider, "cell_phone", ""):
         fwd = (
             f"[Valiant DPC] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
             f"{body_text}\n\n"
             f"Reply to this number to respond. Message is filed in the EMR."
         )
-        mid = _send_sms(PHYSICIAN_CELL, fwd)
+        mid = _send_sms(provider.cell_phone, fwd, from_number=telnyx_from)
+        if mid:
+            msg.telnyx_msg_id = mid
+            msg.sms_status = "sent"
+            db.commit()
+    elif PHYSICIAN_CELL:
+        # Fallback: global physician cell (for backward-compat with single-provider setups)
+        fwd = (
+            f"[Valiant DPC] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
+            f"{body_text}\n\n"
+            f"Reply to this number to respond. Message is filed in the EMR."
+        )
+        mid = _send_sms(PHYSICIAN_CELL, fwd, from_number=telnyx_from)
         if mid:
             msg.telnyx_msg_id = mid
             msg.sms_status = "sent"

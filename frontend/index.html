@@ -1033,13 +1033,37 @@ function PatientChart({token,patient,onBack,user}){
         )}
       </div>
 
-      <div style={{display:'flex',gap:0,borderBottom:'2px solid var(--border)',marginBottom:16,overflowX:'auto'}}>
-        {tabs.map(([k,l,i])=>(
-          <button key={k} className={`tab${tab===k?' active':''}`} onClick={()=>setTab(k)} style={{display:'flex',alignItems:'center',gap:6,whiteSpace:'nowrap'}}>
-            <Icon name={i} size={14}/>{l}
-          </button>
-        ))}
-      </div>
+      {/* ── Chart layout: sidebar nav + content pane ──────────────────── */}
+      <div style={{display:'flex',gap:16,alignItems:'flex-start'}}>
+
+        {/* Sidebar nav */}
+        <div style={{
+          width:172,flexShrink:0,
+          background:'#fff',border:'1px solid var(--border)',
+          borderRadius:10,overflow:'hidden',
+          position:'sticky',top:16,
+        }}>
+          {tabs.map(([k,l,i])=>{
+            const active=tab===k;
+            return(
+              <button key={k} onClick={()=>setTab(k)} style={{
+                width:'100%',display:'flex',alignItems:'center',gap:9,
+                padding:'10px 14px',border:'none',cursor:'pointer',
+                background:active?'var(--accent-bg)':'transparent',
+                color:active?'var(--accent)':'var(--text-3)',
+                fontWeight:active?700:500,
+                fontSize:13,textAlign:'left',
+                borderLeft:active?`3px solid var(--accent)`:'3px solid transparent',
+                transition:'all .12s',
+              }}>
+                <Icon name={i} size={14}/>{l}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Content pane */}
+        <div style={{flex:1,minWidth:0}}>
 
       {/* DEMOGRAPHICS TAB */}
       {tab==='info'&&(
@@ -1508,6 +1532,9 @@ function PatientChart({token,patient,onBack,user}){
           toast={toast}
         />
       )}
+
+        </div>{/* end content pane */}
+      </div>{/* end sidebar + content flex */}
 
       {/* ── IMPORT MODAL ─────────────────────────────────────────────────── */}
       {showImportModal&&(
@@ -4412,6 +4439,13 @@ function Settings({token,user}){
   const [saving,setSaving]=useState(false);
   const [pwForm,setPwForm]=useState({current_password:'',new_password:'',confirm:''});
   const [pwSaving,setPwSaving]=useState(false);
+  // Provider SMS / communication settings
+  const [smsForm,setSmsForm]=useState({telnyx_sms_number:user.telnyx_sms_number||'',cell_phone:user.cell_phone||''});
+  const [smsSaving,setSmsSaving]=useState(false);
+  const saveSmsSettings=async e=>{e.preventDefault();setSmsSaving(true);
+    try{await api('PUT',`/api/users/${user.id}`,{telnyx_sms_number:smsForm.telnyx_sms_number,cell_phone:smsForm.cell_phone},token);
+      toast('Communication settings saved');}
+    catch(e){toast(e.message,'error');}setSmsSaving(false);};
   // MFA state
   const [mfaEnabled,setMfaEnabled]=useState(user.mfa_enabled||false);
   const [mfaSetup,setMfaSetup]=useState(null); // {secret, uri}
@@ -4665,6 +4699,40 @@ function Settings({token,user}){
               <button className="btn btn-primary" type="submit" disabled={pwSaving}>{pwSaving?<Spinner/>:'Update Password'}</button>
             </form>
           </div>
+
+          {/* Provider SMS & communication settings */}
+          {(user.role==='physician'||user.role==='admin')&&(
+            <div className="card">
+              <h3 style={{fontWeight:600,marginBottom:4}}>📱 Communication Settings</h3>
+              <p style={{fontSize:13,color:'#78716c',marginBottom:16}}>
+                Your dedicated Telnyx number is what patients text to reach you.
+                Your cell phone receives the forwarded messages and you reply from it.
+              </p>
+              <form onSubmit={saveSmsSettings}>
+                <div style={{marginBottom:12}}>
+                  <label className="label">Telnyx SMS Number (E.164, e.g. +12145550100)</label>
+                  <input className="input" value={smsForm.telnyx_sms_number}
+                    onChange={e=>setSmsForm({...smsForm,telnyx_sms_number:e.target.value})}
+                    placeholder="+1XXXXXXXXXX"/>
+                  <div style={{fontSize:12,color:'#a8a29e',marginTop:4}}>
+                    Patients will text this number. Set it in your Telnyx console and paste the E.164 number here.
+                  </div>
+                </div>
+                <div style={{marginBottom:16}}>
+                  <label className="label">Your Cell Phone (E.164, e.g. +12145550199)</label>
+                  <input className="input" value={smsForm.cell_phone}
+                    onChange={e=>setSmsForm({...smsForm,cell_phone:e.target.value})}
+                    placeholder="+1XXXXXXXXXX"/>
+                  <div style={{fontSize:12,color:'#a8a29e',marginTop:4}}>
+                    Patient messages are forwarded here. Reply from this number and your reply is filed in the chart.
+                  </div>
+                </div>
+                <button className="btn btn-primary" type="submit" disabled={smsSaving}>
+                  {smsSaving?<Spinner/>:'Save Communication Settings'}
+                </button>
+              </form>
+            </div>
+          )}
 
           {/* MFA setup */}
           <div className="card">
