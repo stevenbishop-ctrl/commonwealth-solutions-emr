@@ -6202,17 +6202,28 @@ def send_message_to_patient(
     if not body:
         raise HTTPException(status_code=400, detail="Message body is required.")
 
+    sms_status = "not_applicable"
+    telnyx_mid = None
+
+    # Send SMS to patient's phone if they have consent and a phone number on file
+    if patient.sms_consent and patient.phone:
+        sms_text = f"[Valiant DPC] {body}"
+        telnyx_mid = _send_sms(patient.phone, sms_text)
+        sms_status = "sent" if telnyx_mid else "failed"
+
     msg = models.PatientMessage(
         patient_id=patient_id,
         direction="outbound",
         body=body,
-        sms_status="not_applicable",
+        sms_status=sms_status,
+        telnyx_msg_id=telnyx_mid,
     )
     db.add(msg)
     db.commit()
     db.refresh(msg)
 
-    audit(db, current_user.id, "SEND_PATIENT_MESSAGE", "Patient", str(patient_id), request=request)
+    audit(db, current_user.id, "SEND_PATIENT_MESSAGE", "Patient", str(patient_id), request=request,
+          details=f"sms_status={sms_status}")
     return clean(msg)
 
 
@@ -6484,16 +6495,28 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
             .first()
         )
         if recent:
+            # Look up the patient to get their phone number and consent status
+            pt = db.query(models.Patient).filter(models.Patient.id == recent.patient_id).first()
+            sms_status = "not_applicable"
+            telnyx_mid = None
+
+            if pt and pt.sms_consent and pt.phone:
+                # Forward physician's reply back to patient's phone
+                fwd_body = f"[Valiant DPC] {body_text}"
+                telnyx_mid = _send_sms(pt.phone, fwd_body)
+                sms_status = "sent" if telnyx_mid else "failed"
+
             reply = models.PatientMessage(
                 patient_id=recent.patient_id,
                 direction="outbound",
                 body=body_text,
-                sms_status="delivered",
+                sms_status=sms_status,
+                telnyx_msg_id=telnyx_mid,
             )
             db.add(reply)
             db.commit()
             audit(db, None, "SMS_PHYSICIAN_REPLY", "Patient", str(recent.patient_id),
-                  details=f"Physician SMS reply filed; patient_id={recent.patient_id}")
+                  details=f"Physician SMS reply filed and forwarded to patient; sms_status={sms_status}")
             return {"ok": True, "filed_to_patient": recent.patient_id}
         return {"ok": True, "ignored": "no recent patient thread to reply to"}
 
