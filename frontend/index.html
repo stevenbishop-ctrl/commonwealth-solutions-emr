@@ -7,39 +7,94 @@
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <script src="https://cdn.tailwindcss.com"></script>
 <!-- Square Web Payments SDK loaded dynamically per environment (sandbox vs production) -->
 <style>
-  body{font-family:'Segoe UI',system-ui,sans-serif;background:#f1f5f9;}
-  .sidebar-item{display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:8px;cursor:pointer;color:#94a3b8;font-size:14px;font-weight:500;transition:all .15s;}
-  .sidebar-item:hover{background:#1e3a5f;color:#fff;}
-  .sidebar-item.active{background:#2563eb;color:#fff;}
-  .card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);padding:24px;}
-  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:all .15s;border:none;}
-  .btn-primary{background:#2563eb;color:#fff;} .btn-primary:hover{background:#1d4ed8;}
-  .btn-secondary{background:#f1f5f9;color:#475569;} .btn-secondary:hover{background:#e2e8f0;}
+  /* ── Design tokens ── */
+  :root{
+    --bg:       #fafaf9;
+    --surface:  #ffffff;
+    --border:   #e7e5e4;
+    --accent:   #0d9488;
+    --accent-h: #0f766e;
+    --accent-bg:#f0fdfa;
+    --sidebar:  #292524;
+    --sidebar-h:#3c3836;
+    --sidebar-b:#44403c;
+    --text-1:   #1c1917;
+    --text-2:   #44403c;
+    --text-3:   #78716c;
+    --text-4:   #a8a29e;
+  }
+
+  /* ── Base ── */
+  *{box-sizing:border-box;}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-1);line-height:1.55;-webkit-font-smoothing:antialiased;}
+
+  /* ── Sidebar ── */
+  .sidebar-item{display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:8px;cursor:pointer;color:var(--text-4);font-size:13.5px;font-weight:500;transition:all .15s;letter-spacing:.01em;}
+  .sidebar-item:hover{background:var(--sidebar-h);color:#e7e5e4;}
+  .sidebar-item.active{background:var(--accent);color:#fff;font-weight:600;}
+
+  /* ── Cards ── */
+  .card{background:var(--surface);border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.05);border:1px solid var(--border);padding:24px;}
+
+  /* ── Buttons ── */
+  .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:13.5px;font-weight:500;cursor:pointer;transition:all .15s;border:none;font-family:inherit;letter-spacing:.01em;}
+  .btn-sm{padding:5px 12px;font-size:12.5px;}
+  .btn-primary{background:var(--accent);color:#fff;} .btn-primary:hover{background:var(--accent-h);}
+  .btn-secondary{background:#f5f5f4;color:var(--text-2);} .btn-secondary:hover{background:#e7e5e4;}
   .btn-success{background:#16a34a;color:#fff;} .btn-success:hover{background:#15803d;}
   .btn-danger{background:#dc2626;color:#fff;} .btn-danger:hover{background:#b91c1c;}
   .btn-warning{background:#d97706;color:#fff;} .btn-warning:hover{background:#b45309;}
-  .btn-outline{background:transparent;border:1px solid #cbd5e1;color:#475569;} .btn-outline:hover{background:#f8fafc;}
-  .input{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;outline:none;transition:border .15s;}
-  .input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1);}
-  .label{display:block;font-size:13px;font-weight:500;color:#374151;margin-bottom:4px;}
-  .badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:500;}
-  .badge-blue{background:#dbeafe;color:#1d4ed8;} .badge-green{background:#dcfce7;color:#15803d;}
-  .badge-red{background:#fee2e2;color:#dc2626;} .badge-yellow{background:#fef9c3;color:#854d0e;}
-  .badge-gray{background:#f1f5f9;color:#475569;}
-  .tab{padding:8px 16px;font-size:14px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:#6b7280;}
-  .tab.active{border-bottom-color:#2563eb;color:#2563eb;}
-  .table-row:hover{background:#f8fafc;}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px;}
-  .modal{background:#fff;border-radius:16px;max-height:90vh;overflow-y:auto;width:100%;max-width:680px;box-shadow:0 20px 60px rgba(0,0,0,.2);}
-  .toast{position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:12px 20px;border-radius:10px;font-size:14px;z-index:2000;animation:slideUp .3s ease;}
-  @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-  .spinner{border:3px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;width:20px;height:20px;animation:spin .6s linear infinite;display:inline-block;}
+  .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text-2);} .btn-outline:hover{background:#f5f5f4;border-color:#d6d3d1;}
+
+  /* ── Inputs ── */
+  .input{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;outline:none;transition:border .15s,box-shadow .15s;background:var(--surface);color:var(--text-1);}
+  .input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(13,148,136,.12);}
+  .input::placeholder{color:var(--text-4);}
+  .label{display:block;font-size:12.5px;font-weight:600;color:var(--text-2);margin-bottom:5px;letter-spacing:.02em;text-transform:uppercase;}
+
+  /* ── Badges ── */
+  .badge{display:inline-flex;align-items:center;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600;letter-spacing:.02em;}
+  .badge-blue{background:#ccfbf1;color:#0f766e;}
+  .badge-green{background:#dcfce7;color:#15803d;}
+  .badge-red{background:#fee2e2;color:#dc2626;}
+  .badge-yellow{background:#fef9c3;color:#854d0e;}
+  .badge-gray{background:#f5f5f4;color:var(--text-2);}
+
+  /* ── Tabs ── */
+  .tab{padding:9px 16px;font-size:13.5px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--text-3);transition:all .15s;letter-spacing:.01em;}
+  .tab:hover{color:var(--text-1);}
+  .tab.active{border-bottom-color:var(--accent);color:var(--accent);font-weight:600;}
+
+  /* ── Tables ── */
+  .table-row:hover{background:#fafaf9;}
+
+  /* ── Modals ── */
+  .modal-overlay{position:fixed;inset:0;background:rgba(28,25,23,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px;backdrop-filter:blur(2px);}
+  .modal{background:var(--surface);border-radius:16px;max-height:90vh;overflow-y:auto;width:100%;max-width:680px;box-shadow:0 24px 64px rgba(0,0,0,.18);}
+
+  /* ── Toasts ── */
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--sidebar);color:#fafaf9;padding:12px 20px;border-radius:10px;font-size:13.5px;z-index:2000;animation:slideUp .25s ease;box-shadow:0 8px 24px rgba(0,0,0,.2);}
+  @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+  /* ── Spinner ── */
+  .spinner{border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;width:20px;height:20px;animation:spin .6s linear infinite;display:inline-block;}
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── Misc ── */
   textarea.input{min-height:80px;resize:vertical;}
-  select.input{background:#fff;}
+  select.input{background:var(--surface);}
+  h1,h2,h3{color:var(--text-1);font-weight:700;}
+  a{color:var(--accent);}
+
+  /* ── Empty states ── */
+  .empty-state{text-align:center;padding:56px 24px;color:var(--text-3);}
+
+  /* ── Responsive ── */
   @media(max-width:768px){.sidebar{transform:translateX(-100%);position:fixed;z-index:500;height:100vh;} .sidebar.open{transform:translateX(0);} .main-content{margin-left:0!important;}}
 </style>
 </head>
@@ -86,7 +141,7 @@ function ToastProvider({children}){
       {children}
       <div style={{position:'fixed',bottom:24,right:24,zIndex:2000,display:'flex',flexDirection:'column',gap:8}}>
         {toasts.map(t=>(
-          <div key={t.id} className="toast" style={{background:t.type==='error'?'#dc2626':t.type==='warning'?'#d97706':'#1e293b'}}>
+          <div key={t.id} className="toast" style={{background:t.type==='error'?'#dc2626':t.type==='warning'?'#d97706':'#1c1917'}}>
             {t.msg}
           </div>
         ))}
@@ -140,7 +195,7 @@ function Modal({title,onClose,children,wide=false}){
     <div className="modal-overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div className="modal" style={{maxWidth:wide?900:680}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'20px 24px',borderBottom:'1px solid #e2e8f0'}}>
-          <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>{title}</h2>
+          <h2 style={{fontSize:18,fontWeight:700,color:'#1c1917'}}>{title}</h2>
           <button onClick={onClose} className="btn btn-secondary" style={{padding:'4px 8px'}}><Icon name="x" size={16}/></button>
         </div>
         <div style={{padding:24}}>{children}</div>
@@ -233,15 +288,15 @@ function LoginPage({onLogin}){
   };
 
   const cardStyle={background:'#fff',borderRadius:20,padding:40,width:'100%',maxWidth:420,boxShadow:'0 25px 60px rgba(0,0,0,.3)'};
-  const wrapStyle={minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#1e3a5f 0%,#2563eb 100%)'};
+  const wrapStyle={minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(135deg,#292524 0%,#1c3d3b 100%)'};
 
   const header=(
     <div style={{textAlign:'center',marginBottom:32}}>
-      <div style={{width:60,height:60,background:'#dbeafe',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
-        <Icon name="shield" size={32} cls="" style={{color:'#2563eb'}}/>
+      <div style={{width:60,height:60,background:'#ccfbf1',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
+        <Icon name="shield" size={32} cls="" style={{color:'#0d9488'}}/>
       </div>
-      <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>MedFlow EMR</h1>
-      <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
+      <h1 style={{fontSize:28,fontWeight:800,color:'#1c1917'}}>MedFlow EMR</h1>
+      <p style={{color:'#78716c',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
     </div>
   );
 
@@ -252,8 +307,8 @@ function LoginPage({onLogin}){
           {header}
           <div style={{textAlign:'center',marginBottom:20}}>
             <div style={{fontSize:40,marginBottom:8}}>🔑</div>
-            <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>Password Expired</h2>
-            <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Your password is more than 90 days old. Please set a new password to continue.</p>
+            <h2 style={{fontSize:18,fontWeight:700,color:'#1c1917'}}>Password Expired</h2>
+            <p style={{fontSize:13,color:'#78716c',marginTop:4}}>Your password is more than 90 days old. Please set a new password to continue.</p>
           </div>
           {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
           <form onSubmit={submitPwReset}>
@@ -277,7 +332,7 @@ function LoginPage({onLogin}){
               {loading?<Spinner/>:'Set New Password & Sign In'}
             </button>
           </form>
-          <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:16}}>HIPAA-compliant 90-day password policy</p>
+          <p style={{fontSize:12,color:'#a8a29e',textAlign:'center',marginTop:16}}>HIPAA-compliant 90-day password policy</p>
         </div>
       </div>
     );
@@ -290,8 +345,8 @@ function LoginPage({onLogin}){
           {header}
           <div style={{textAlign:'center',marginBottom:20}}>
             <div style={{fontSize:40,marginBottom:8}}>🔐</div>
-            <h2 style={{fontSize:18,fontWeight:700,color:'#1e293b'}}>Two-Factor Verification</h2>
-            <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Enter the 6-digit code from your authenticator app.</p>
+            <h2 style={{fontSize:18,fontWeight:700,color:'#1c1917'}}>Two-Factor Verification</h2>
+            <p style={{fontSize:13,color:'#78716c',marginTop:4}}>Enter the 6-digit code from your authenticator app.</p>
           </div>
           {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
           <form onSubmit={submitMfa}>
@@ -304,11 +359,11 @@ function LoginPage({onLogin}){
               {loading?<Spinner/>:'Verify'}
             </button>
           </form>
-          <button style={{width:'100%',marginTop:12,fontSize:13,color:'#64748b',background:'none',border:'none',cursor:'pointer'}}
+          <button style={{width:'100%',marginTop:12,fontSize:13,color:'#78716c',background:'none',border:'none',cursor:'pointer'}}
             onClick={()=>{setMfaPending(false);setMfaToken('');setMfaCode('');setErr('');}}>
             ← Back to login
           </button>
-          <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:16}}>HIPAA-compliant • All access is logged</p>
+          <p style={{fontSize:12,color:'#a8a29e',textAlign:'center',marginTop:16}}>HIPAA-compliant • All access is logged</p>
         </div>
       </div>
     );
@@ -332,7 +387,7 @@ function LoginPage({onLogin}){
             {loading?<Spinner/>:'Sign In'}
           </button>
         </form>
-        <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginTop:24}}>
+        <p style={{fontSize:12,color:'#a8a29e',textAlign:'center',marginTop:24}}>
           HIPAA-compliant • All access is logged • 256-bit JWT auth
         </p>
       </div>
@@ -352,7 +407,7 @@ function Dashboard({token}){
   },[token]);
 
   const cards=[
-    {label:'Total Patients',key:'total_patients',icon:'users',color:'#2563eb',bg:'#dbeafe'},
+    {label:'Total Patients',key:'total_patients',icon:'users',color:'#0d9488',bg:'#ccfbf1'},
     {label:'Notes Today',key:'notes_today',icon:'file',color:'#16a34a',bg:'#dcfce7'},
     {label:'Pending Labs',key:'pending_lab_orders',icon:'lab',color:'#d97706',bg:'#fef9c3'},
     {label:'Active Memberships',key:'active_memberships',icon:'star',color:'#7c3aed',bg:'#ede9fe'},
@@ -360,7 +415,7 @@ function Dashboard({token}){
 
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:24}}>Dashboard</h1>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:24}}>Dashboard</h1>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:16,marginBottom:24}}>
         {cards.map(c=>(
           <div key={c.key} className="card" style={{display:'flex',alignItems:'center',gap:16}}>
@@ -368,14 +423,14 @@ function Dashboard({token}){
               <Icon name={c.icon} size={22} cls="" style={{color:c.color}}/>
             </div>
             <div>
-              <div style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>{stats?stats[c.key]:'—'}</div>
-              <div style={{fontSize:13,color:'#64748b'}}>{c.label}</div>
+              <div style={{fontSize:28,fontWeight:800,color:'#1c1917'}}>{stats?stats[c.key]:'—'}</div>
+              <div style={{fontSize:13,color:'#78716c'}}>{c.label}</div>
             </div>
           </div>
         ))}
       </div>
       <div className="card">
-        <h2 style={{fontSize:16,fontWeight:600,color:'#1e293b',marginBottom:12}}>Quick Actions</h2>
+        <h2 style={{fontSize:16,fontWeight:600,color:'#1c1917',marginBottom:12}}>Quick Actions</h2>
         <div style={{display:'flex',flexWrap:'wrap',gap:10}}>
           {[['New Patient','users'],['New Note','file'],['Lab Order','lab'],['Send Fax','fax']].map(([l,i])=>(
             <button key={l} className="btn btn-outline" onClick={()=>window.dispatchEvent(new CustomEvent('nav',{detail:l.toLowerCase().replace(' ','-')}))}>
@@ -388,7 +443,7 @@ function Dashboard({token}){
         <div style={{display:'flex',alignItems:'center',gap:8,color:'#16a34a',marginBottom:8}}>
           <Icon name="shield" size={16}/><span style={{fontSize:14,fontWeight:600}}>HIPAA Compliance Active</span>
         </div>
-        <p style={{fontSize:13,color:'#64748b'}}>All PHI access is automatically audit-logged with user ID, timestamp, and IP address. Token expiry: 8 hours.</p>
+        <p style={{fontSize:13,color:'#78716c'}}>All PHI access is automatically audit-logged with user ID, timestamp, and IP address. Token expiry: 8 hours.</p>
       </div>
     </div>
   );
@@ -419,12 +474,12 @@ function PatientList({token,onSelect,onNew}){
   return(
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20,flexWrap:'wrap',gap:12}}>
-        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Patients</h1>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917'}}>Patients</h1>
         <button className="btn btn-primary" onClick={onNew}><Icon name="plus" size={16}/>New Patient</button>
       </div>
       <div className="card">
         <div style={{position:'relative',marginBottom:16}}>
-          <Icon name="search" size={16} cls="" style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',color:'#94a3b8'}}/>
+          <Icon name="search" size={16} cls="" style={{position:'absolute',left:12,top:'50%',transform:'translateY(-50%)',color:'#a8a29e'}}/>
           <input className="input" style={{paddingLeft:36}} placeholder="Search by name, phone, or email…" value={search} onChange={handleSearch}/>
         </div>
         {loading?<div style={{textAlign:'center',padding:40}}><Spinner/></div>:(
@@ -433,18 +488,18 @@ function PatientList({token,onSelect,onNew}){
               <thead>
                 <tr style={{borderBottom:'2px solid #e2e8f0'}}>
                   {['Name','DOB','Phone','Insurance',''].map(h=>(
-                    <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:13,fontWeight:600,color:'#475569'}}>{h}</th>
+                    <th key={h} style={{padding:'10px 12px',textAlign:'left',fontSize:13,fontWeight:600,color:'#57534e'}}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {patients.length===0?
-                  <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'#94a3b8'}}>No patients found</td></tr>:
+                  <tr><td colSpan={5} style={{textAlign:'center',padding:32,color:'#a8a29e'}}>No patients found</td></tr>:
                   patients.map(p=>(
                     <tr key={p.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
-                      <td style={{padding:'12px 12px',fontWeight:500,color:'#1e293b'}}>{p.first_name} {p.last_name}</td>
-                      <td style={{padding:'12px 12px',color:'#64748b',fontSize:14}}>{p.dob}</td>
-                      <td style={{padding:'12px 12px',color:'#64748b',fontSize:14}}>{p.phone}</td>
+                      <td style={{padding:'12px 12px',fontWeight:500,color:'#1c1917'}}>{p.first_name} {p.last_name}</td>
+                      <td style={{padding:'12px 12px',color:'#78716c',fontSize:14}}>{p.dob}</td>
+                      <td style={{padding:'12px 12px',color:'#78716c',fontSize:14}}>{p.phone}</td>
                       <td style={{padding:'12px 12px'}}><span className="badge badge-blue">{p.insurance_name||'—'}</span></td>
                       <td style={{padding:'12px 12px'}}>
                         <button className="btn btn-outline" onClick={()=>onSelect(p)}><Icon name="chevron" size={14}/>Chart</button>
@@ -499,12 +554,12 @@ function PatientForm({token,patient,onSave,onCancel}){
   return(
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>{patient?'Edit Patient':'New Patient'}</h1>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917'}}>{patient?'Edit Patient':'New Patient'}</h1>
         <button className="btn btn-secondary" onClick={onCancel}>Cancel</button>
       </div>
       <form onSubmit={submit}>
         <div className="card" style={{marginBottom:16}}>
-          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Demographics</h3>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#57534e',marginBottom:16}}>Demographics</h3>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             {G({label:"First Name",k:"first_name",required:true})}
             {G({label:"Last Name",k:"last_name",required:true})}
@@ -516,7 +571,7 @@ function PatientForm({token,patient,onSave,onCancel}){
           </div>
         </div>
         <div className="card" style={{marginBottom:16}}>
-          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Address</h3>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#57534e',marginBottom:16}}>Address</h3>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             <div style={{gridColumn:'span 2'}}>{G({label:"Street Address",k:"address"})}</div>
             {G({label:"City",k:"city"})}
@@ -525,7 +580,7 @@ function PatientForm({token,patient,onSave,onCancel}){
           </div>
         </div>
         <div className="card" style={{marginBottom:16}}>
-          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Insurance</h3>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#57534e',marginBottom:16}}>Insurance</h3>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             {G({label:"Insurance Name",k:"insurance_name"})}
             {G({label:"Member ID",k:"insurance_id"})}
@@ -533,7 +588,7 @@ function PatientForm({token,patient,onSave,onCancel}){
           </div>
         </div>
         <div className="card" style={{marginBottom:16}}>
-          <h3 style={{fontSize:15,fontWeight:600,color:'#475569',marginBottom:16}}>Emergency Contact</h3>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#57534e',marginBottom:16}}>Emergency Contact</h3>
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
             {G({label:"Contact Name",k:"emergency_contact"})}
             {G({label:"Contact Phone",k:"emergency_phone"})}
@@ -652,8 +707,8 @@ function NoteEditor({token,patient,note,onSave,onCancel}){
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20,flexWrap:'wrap',gap:10}}>
         <div>
-          <h1 style={{fontSize:20,fontWeight:700,color:'#1e293b'}}>{note?'Edit Note':'New Clinical Note'}</h1>
-          <p style={{fontSize:13,color:'#64748b'}}>Patient: {patient.first_name} {patient.last_name}</p>
+          <h1 style={{fontSize:20,fontWeight:700,color:'#1c1917'}}>{note?'Edit Note':'New Clinical Note'}</h1>
+          <p style={{fontSize:13,color:'#78716c'}}>Patient: {patient.first_name} {patient.last_name}</p>
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
           {note&&<button className="btn btn-outline" onClick={downloadPDF} disabled={pdfLoading}><Icon name="pdf" size={15}/>{pdfLoading?'…':'PDF'}</button>}
@@ -669,9 +724,9 @@ function NoteEditor({token,patient,note,onSave,onCancel}){
       </div>}
 
       {showAI&&(
-        <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
-          <h3 style={{fontSize:15,fontWeight:600,color:'#1e293b',marginBottom:10}}>🤖 AI Note Generator (Local LLM)</h3>
-          <p style={{fontSize:13,color:'#64748b',marginBottom:12}}>Describe the clinical encounter. The AI will generate a complete Medicare-compliant SOAP note with ICD-10 and CPT codes.</p>
+        <div className="card" style={{marginBottom:16,border:'2px solid var(--accent)'}}>
+          <h3 style={{fontSize:15,fontWeight:600,color:'#1c1917',marginBottom:10}}>🤖 AI Note Generator (Local LLM)</h3>
+          <p style={{fontSize:13,color:'#78716c',marginBottom:12}}>Describe the clinical encounter. The AI will generate a complete Medicare-compliant SOAP note with ICD-10 and CPT codes.</p>
           <textarea className="input" rows={4} value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder="e.g. 65-year-old male with 2-week history of productive cough, fever 101.2°F, shortness of breath. PMH: HTN, DM2. On metformin and lisinopril. SpO2 94% on room air…"/>
           <div style={{display:'flex',gap:8,marginTop:10}}>
             <button className="btn btn-primary" onClick={generateAI} disabled={genLoading||!aiPrompt.trim()}>
@@ -710,13 +765,13 @@ function NoteEditor({token,patient,note,onSave,onCancel}){
       </div>
 
       <div className="card" style={{marginBottom:16}}>
-        <h3 style={{fontSize:15,fontWeight:600,color:'#1e293b',marginBottom:14}}>Billing Codes</h3>
+        <h3 style={{fontSize:15,fontWeight:600,color:'#1c1917',marginBottom:14}}>Billing Codes</h3>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
           <div>
-            <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>ICD-10 Diagnosis Codes</h4>
+            <h4 style={{fontSize:13,fontWeight:600,color:'#57534e',marginBottom:8}}>ICD-10 Diagnosis Codes</h4>
             <div style={{maxHeight:200,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,padding:8}}>
               {ICD10_COMMON.map(c=>(
-                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.icd10_codes.includes(c.code)?'#dbeafe':'transparent'}}>
+                <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.icd10_codes.includes(c.code)?'#ccfbf1':'transparent'}}>
                   <input type="checkbox" checked={form.icd10_codes.includes(c.code)} onChange={()=>toggleCode('icd10_codes',c.code)}/>
                   <span style={{fontSize:13}}><b>{c.code}</b> — {c.desc}</span>
                 </label>
@@ -727,7 +782,7 @@ function NoteEditor({token,patient,note,onSave,onCancel}){
             </div>}
           </div>
           <div>
-            <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>CPT E&M Codes</h4>
+            <h4 style={{fontSize:13,fontWeight:600,color:'#57534e',marginBottom:8}}>CPT E&M Codes</h4>
             <div style={{maxHeight:200,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,padding:8}}>
               {CPT_COMMON.map(c=>(
                 <label key={c.code} style={{display:'flex',gap:8,padding:'4px 6px',borderRadius:4,cursor:'pointer',background:form.cpt_codes.includes(c.code)?'#dcfce7':'transparent'}}>
@@ -860,11 +915,14 @@ function PatientChart({token,patient,onBack,user}){
 
   return(
     <div>
-      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}>
-        <button className="btn btn-outline" onClick={onBack}>← Back</button>
+      <div className="card" style={{display:'flex',alignItems:'center',gap:14,marginBottom:16,padding:'14px 20px'}}>
+        <button className="btn btn-outline btn-sm" onClick={onBack}>← Back</button>
+        <div style={{width:40,height:40,borderRadius:'50%',background:'var(--accent-bg)',border:'2px solid var(--accent)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+          <span style={{fontSize:16,fontWeight:700,color:'var(--accent)'}}>{patient.first_name[0]}{patient.last_name[0]}</span>
+        </div>
         <div style={{flex:1}}>
-          <h1 style={{fontSize:22,fontWeight:700,color:'#1e293b'}}>{patient.first_name} {patient.last_name}</h1>
-          <p style={{fontSize:13,color:'#64748b'}}>DOB: {patient.dob} · {patient.phone} · {patient.insurance_name}</p>
+          <h1 style={{fontSize:20,fontWeight:700,color:'var(--text-1)',margin:0,lineHeight:1.3}}>{patient.first_name} {patient.last_name}</h1>
+          <p style={{fontSize:12.5,color:'var(--text-3)',margin:0}}>DOB: {patient.dob} · {patient.phone} · {patient.insurance_name||'No insurance'}</p>
         </div>
         {(user.role==='admin'||user.role==='physician')&&(
           <button className="btn btn-outline" title="Export complete patient records (HIPAA Right of Access)" onClick={()=>{
@@ -886,7 +944,7 @@ function PatientChart({token,patient,onBack,user}){
         )}
       </div>
 
-      <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16,overflowX:'auto'}}>
+      <div style={{display:'flex',gap:0,borderBottom:'2px solid var(--border)',marginBottom:16,overflowX:'auto'}}>
         {tabs.map(([k,l,i])=>(
           <button key={k} className={`tab${tab===k?' active':''}`} onClick={()=>setTab(k)} style={{display:'flex',alignItems:'center',gap:6,whiteSpace:'nowrap'}}>
             <Icon name={i} size={14}/>{l}
@@ -904,34 +962,34 @@ function PatientChart({token,patient,onBack,user}){
               </div>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
                 <div className="card">
-                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Personal Information</h3>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',marginBottom:12}}>Personal Information</h3>
                   {[['Full Name',`${patientData.first_name} ${patientData.last_name}`],['Date of Birth',patientData.dob],['Gender',patientData.gender],['Phone',patientData.phone],['Email',patientData.email],['SSN Last 4',patientData.ssn_last4?`***-**-${patientData.ssn_last4}`:'—']].map(([l,v])=>(
                     <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
-                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                      <span style={{color:'#78716c'}}>{l}</span><span style={{fontWeight:500,color:'#1c1917'}}>{v||'—'}</span>
                     </div>
                   ))}
                 </div>
                 <div className="card">
-                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Address</h3>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',marginBottom:12}}>Address</h3>
                   {[['Street',patientData.address],['City',patientData.city],['State',patientData.state],['ZIP',patientData.zip_code]].map(([l,v])=>(
                     <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
-                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                      <span style={{color:'#78716c'}}>{l}</span><span style={{fontWeight:500,color:'#1c1917'}}>{v||'—'}</span>
                     </div>
                   ))}
                 </div>
                 <div className="card">
-                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Insurance</h3>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',marginBottom:12}}>Insurance</h3>
                   {[['Insurance',patientData.insurance_name],['Member ID',patientData.insurance_id],['Group #',patientData.insurance_group]].map(([l,v])=>(
                     <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
-                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                      <span style={{color:'#78716c'}}>{l}</span><span style={{fontWeight:500,color:'#1c1917'}}>{v||'—'}</span>
                     </div>
                   ))}
                 </div>
                 <div className="card">
-                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',marginBottom:12}}>Emergency Contact</h3>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',marginBottom:12}}>Emergency Contact</h3>
                   {[['Name',patientData.emergency_contact],['Phone',patientData.emergency_phone]].map(([l,v])=>(
                     <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid #f1f5f9',fontSize:14}}>
-                      <span style={{color:'#64748b'}}>{l}</span><span style={{fontWeight:500,color:'#1e293b'}}>{v||'—'}</span>
+                      <span style={{color:'#78716c'}}>{l}</span><span style={{fontWeight:500,color:'#1c1917'}}>{v||'—'}</span>
                     </div>
                   ))}
                 </div>
@@ -939,15 +997,15 @@ function PatientChart({token,patient,onBack,user}){
               {/* Patient Portal Activation */}
               <div className="card" style={{marginTop:16,border: patientData.portal_active ? '1px solid #bbf7d0' : '1px solid #e2e8f0'}}>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                  <h3 style={{fontSize:14,fontWeight:600,color:'#475569',margin:0}}>Patient Portal Access</h3>
+                  <h3 style={{fontSize:14,fontWeight:600,color:'#57534e',margin:0}}>Patient Portal Access</h3>
                   {patientData.portal_active
                     ? <span className="badge badge-green">Active</span>
                     : <span className="badge badge-gray">Not Activated</span>}
                 </div>
                 {patientData.portal_active&&(
-                  <div style={{marginBottom:12,fontSize:13,color:'#374151'}}>
+                  <div style={{marginBottom:12,fontSize:13,color:'#44403c'}}>
                     Login email: <b>{patientData.portal_email}</b>
-                    <span style={{color:'#94a3b8',marginLeft:8}}>· Patient can log in at /portal</span>
+                    <span style={{color:'#a8a29e',marginLeft:8}}>· Patient can log in at /portal</span>
                   </div>
                 )}
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
@@ -1003,12 +1061,12 @@ function PatientChart({token,patient,onBack,user}){
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
             <button className="btn btn-primary" onClick={()=>setShowNewNote(true)}><Icon name="plus" size={15}/>New Note</button>
           </div>
-          {notes.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No notes yet</div>:notes.map(n=>(
+          {notes.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No notes yet</div>:notes.map(n=>(
             <div key={n.id} className="card" style={{marginBottom:10}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
                 <div>
-                  <div style={{fontWeight:600,color:'#1e293b'}}>{n.note_type} — {n.visit_date?.slice(0,10)}</div>
-                  <div style={{fontSize:13,color:'#64748b',marginTop:2}}>{n.chief_complaint?.slice(0,80)}…</div>
+                  <div style={{fontWeight:600,color:'#1c1917'}}>{n.note_type} — {n.visit_date?.slice(0,10)}</div>
+                  <div style={{fontSize:13,color:'#78716c',marginTop:2}}>{n.chief_complaint?.slice(0,80)}…</div>
                   <div style={{display:'flex',gap:6,marginTop:6,flexWrap:'wrap'}}>
                     {statusBadge(n.status)}
                     {n.ai_generated&&<span className="badge badge-yellow">AI-assisted</span>}
@@ -1042,7 +1100,7 @@ function PatientChart({token,patient,onBack,user}){
             <button className="btn btn-primary" onClick={()=>setShowLabForm(true)}><Icon name="plus" size={15}/>New Lab Order</button>
           </div>
 
-          {labs.length===0&&<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No lab orders</div>}
+          {labs.length===0&&<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No lab orders</div>}
 
           {labs.map(l=>{
             const result=labResults[l.id];
@@ -1061,11 +1119,11 @@ function PatientChart({token,patient,onBack,user}){
                       {hasNewResults&&<span style={{marginLeft:8,fontSize:11,background:'#dcfce7',color:'#16a34a',padding:'2px 8px',borderRadius:10,fontWeight:700}}>✓ RESULTS IN</span>}
                       {abnormals.length>0&&<span style={{marginLeft:6,fontSize:11,background:'#fee2e2',color:'#dc2626',padding:'2px 8px',borderRadius:10,fontWeight:700}}>⚠ {abnormals.length} ABNORMAL</span>}
                     </div>
-                    <div style={{fontSize:12,color:'#64748b'}}>
+                    <div style={{fontSize:12,color:'#78716c'}}>
                       {l.facility} · {l.created_at?.slice(0,10)} · {statusBadge(l.priority)}
-                      {l.labcorp_order_id&&<span style={{marginLeft:8,fontFamily:'monospace',color:'#94a3b8'}}>LC#{l.labcorp_order_id}</span>}
+                      {l.labcorp_order_id&&<span style={{marginLeft:8,fontFamily:'monospace',color:'#a8a29e'}}>LC#{l.labcorp_order_id}</span>}
                     </div>
-                    {l.clinical_indication&&<div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>{l.clinical_indication}</div>}
+                    {l.clinical_indication&&<div style={{fontSize:12,color:'#a8a29e',marginTop:2}}>{l.clinical_indication}</div>}
                   </div>
                   <div style={{display:'flex',gap:6,alignItems:'center',flexShrink:0}}>
                     {statusBadge(l.status)}
@@ -1096,15 +1154,15 @@ function PatientChart({token,patient,onBack,user}){
                 {/* Expanded result observations */}
                 {isExpanded&&obs.length>0&&(
                   <div style={{marginTop:14,borderTop:'1px solid #e2e8f0',paddingTop:12}}>
-                    <div style={{fontSize:12,fontWeight:600,color:'#475569',marginBottom:8}}>
+                    <div style={{fontSize:12,fontWeight:600,color:'#57534e',marginBottom:8}}>
                       RESULT — {result.received_at?.slice(0,10)}
-                      {result.status&&<span style={{marginLeft:8,textTransform:'uppercase',color:'#94a3b8'}}>{result.status}</span>}
+                      {result.status&&<span style={{marginLeft:8,textTransform:'uppercase',color:'#a8a29e'}}>{result.status}</span>}
                     </div>
                     <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
                       <thead>
                         <tr style={{borderBottom:'1px solid #e2e8f0'}}>
                           {['Test','Result','Units','Reference Range','Flag'].map(h=>(
-                            <th key={h} style={{textAlign:'left',padding:'4px 8px',color:'#64748b',fontWeight:600,fontSize:11}}>{h}</th>
+                            <th key={h} style={{textAlign:'left',padding:'4px 8px',color:'#78716c',fontWeight:600,fontSize:11}}>{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1118,9 +1176,9 @@ function PatientChart({token,patient,onBack,user}){
                               background:isCritical?'#fef2f2':isAbn?'#fffbeb':'transparent'
                             }}>
                               <td style={{padding:'5px 8px',fontWeight:500}}>{o.name}</td>
-                              <td style={{padding:'5px 8px',fontWeight:isAbn?700:400,color:isCritical?'#dc2626':isAbn?'#d97706':'#1e293b'}}>{o.value}</td>
-                              <td style={{padding:'5px 8px',color:'#64748b'}}>{o.units}</td>
-                              <td style={{padding:'5px 8px',color:'#64748b'}}>{o.reference_range}</td>
+                              <td style={{padding:'5px 8px',fontWeight:isAbn?700:400,color:isCritical?'#dc2626':isAbn?'#d97706':'#1c1917'}}>{o.value}</td>
+                              <td style={{padding:'5px 8px',color:'#78716c'}}>{o.units}</td>
+                              <td style={{padding:'5px 8px',color:'#78716c'}}>{o.reference_range}</td>
                               <td style={{padding:'5px 8px'}}>
                                 {isAbn&&<span style={{
                                   fontSize:11,fontWeight:700,padding:'1px 6px',borderRadius:8,
@@ -1153,7 +1211,7 @@ function PatientChart({token,patient,onBack,user}){
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
             <button className="btn btn-primary" onClick={()=>setShowImagingForm(true)}><Icon name="plus" size={15}/>New Imaging Order</button>
           </div>
-          {imaging.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No imaging orders</div>:imaging.map(o=>(
+          {imaging.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No imaging orders</div>:imaging.map(o=>(
             <ImagingOrderCard key={o.id} order={o} token={token} onUpdate={updated=>setImaging(imaging.map(x=>x.id===updated.id?updated:x))}/>
           ))}
           {showImagingForm&&<ImagingOrderForm token={token} patient={patient} onSave={o=>{setImaging([o,...imaging]);setShowImagingForm(false);}} onCancel={()=>setShowImagingForm(false)}/>}
@@ -1166,10 +1224,10 @@ function PatientChart({token,patient,onBack,user}){
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
             <button className="btn btn-primary" onClick={()=>setShowFaxForm(true)}><Icon name="plus" size={15}/>Send Fax</button>
           </div>
-          {faxes.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No faxes</div>:faxes.map(f=>(
+          {faxes.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No faxes</div>:faxes.map(f=>(
             <div key={f.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
               <div><Icon name={f.direction==='sent'?'send':'fax'} size={14}/> <b>{f.direction.toUpperCase()}</b> — {f.subject}
-                <div style={{fontSize:13,color:'#64748b'}}>{f.direction==='sent'?'To: ':'From: '}{f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
+                <div style={{fontSize:13,color:'#78716c'}}>{f.direction==='sent'?'To: ':'From: '}{f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
               </div>
               {statusBadge(f.status)}
             </div>
@@ -1188,14 +1246,14 @@ function PatientChart({token,patient,onBack,user}){
             </button>
             <button className="btn btn-secondary" onClick={()=>setShowMembershipForm(true)}><Icon name="plus" size={15}/>Manual Membership</button>
           </div>
-          {memberships.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No memberships</div>:memberships.map(m=>(
+          {memberships.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No memberships</div>:memberships.map(m=>(
             <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
               <div>
                 <div style={{fontWeight:600}}>{m.plan_name}</div>
-                <div style={{fontSize:13,color:'#64748b'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
-                {m.next_billing_date&&<div style={{fontSize:11,color:'#64748b',marginTop:2}}>Next billing: {m.next_billing_date.slice(0,10)}</div>}
-                {m.last_billed_at&&<div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Last charged: {m.last_billed_at.slice(0,10)}</div>}
-                {m.square_card_id&&<div style={{fontSize:11,color:'#94a3b8',marginTop:1}}>Square card: …{m.square_card_id.slice(-6)}</div>}
+                <div style={{fontSize:13,color:'#78716c'}}>${m.price_monthly}/mo · Started {m.start_date?.slice(0,10)}</div>
+                {m.next_billing_date&&<div style={{fontSize:11,color:'#78716c',marginTop:2}}>Next billing: {m.next_billing_date.slice(0,10)}</div>}
+                {m.last_billed_at&&<div style={{fontSize:11,color:'#a8a29e',marginTop:1}}>Last charged: {m.last_billed_at.slice(0,10)}</div>}
+                {m.square_card_id&&<div style={{fontSize:11,color:'#a8a29e',marginTop:1}}>Square card: …{m.square_card_id.slice(-6)}</div>}
               </div>
               <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
                 {/* Billing status badge */}
@@ -1235,15 +1293,15 @@ function PatientChart({token,patient,onBack,user}){
           {/* Revenue summary */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:16}}>
             <div className="card" style={{padding:'14px 18px'}}>
-              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>CARD (SQUARE)</div>
+              <div style={{fontSize:11,color:'#a8a29e',marginBottom:2}}>CARD (SQUARE)</div>
               <div style={{fontSize:20,fontWeight:800,color:'#006aff'}}>${payments.filter(p=>p.status==='completed'&&p.payment_method==='square').reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
             </div>
             <div className="card" style={{padding:'14px 18px'}}>
-              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>CRYPTO (ZAPRITE)</div>
+              <div style={{fontSize:11,color:'#a8a29e',marginBottom:2}}>CRYPTO (ZAPRITE)</div>
               <div style={{fontSize:20,fontWeight:800,color:'#f7931a'}}>${payments.filter(p=>p.status==='completed'&&p.payment_method==='crypto').reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
             </div>
             <div className="card" style={{padding:'14px 18px'}}>
-              <div style={{fontSize:11,color:'#94a3b8',marginBottom:2}}>MANUAL</div>
+              <div style={{fontSize:11,color:'#a8a29e',marginBottom:2}}>MANUAL</div>
               <div style={{fontSize:20,fontWeight:800,color:'#16a34a'}}>${payments.filter(p=>p.status==='completed'&&!['square','crypto'].includes(p.payment_method)).reduce((s,p)=>s+p.amount,0).toFixed(2)}</div>
             </div>
           </div>
@@ -1251,18 +1309,18 @@ function PatientChart({token,patient,onBack,user}){
           {/* Payments list */}
           {payments.length>0&&(
             <div>
-              <h4 style={{fontSize:13,fontWeight:600,color:'#475569',marginBottom:8}}>Payment History</h4>
+              <h4 style={{fontSize:13,fontWeight:600,color:'#57534e',marginBottom:8}}>Payment History</h4>
               {payments.map(p=>(
                 <div key={p.id} className="card" style={{marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
                   <div><div style={{fontWeight:600}}>${p.amount.toFixed(2)} — {p.description}</div>
-                    <div style={{fontSize:13,color:'#64748b'}}>{p.payment_method} · {p.created_at?.slice(0,10)}</div>
+                    <div style={{fontSize:13,color:'#78716c'}}>{p.payment_method} · {p.created_at?.slice(0,10)}</div>
                   </div>
                   {statusBadge(p.status)}
                 </div>
               ))}
             </div>
           )}
-          {payments.length===0&&<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No payments yet</div>}
+          {payments.length===0&&<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No payments yet</div>}
           {showPaymentForm&&<PaymentForm token={token} patient={patient} onSave={p=>{setPayments([p,...payments]);setShowPaymentForm(false);}} onCancel={()=>setShowPaymentForm(false)}/>}
         </div>
       )}
@@ -1340,7 +1398,7 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
       {selectedTests.length>0&&(
         <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
           {selectedTests.map((t,i)=>(
-            <span key={i} style={{display:'inline-flex',alignItems:'center',gap:5,background:'#dbeafe',color:'#1e40af',padding:'4px 10px',borderRadius:20,fontSize:13,fontWeight:500}}>
+            <span key={i} style={{display:'inline-flex',alignItems:'center',gap:5,background:'#ccfbf1',color:'#0f766e',padding:'4px 10px',borderRadius:20,fontSize:13,fontWeight:500}}>
               <span>{t.name}</span>
               {t.code&&<span style={{opacity:0.6,fontSize:11}}>#{t.code}</span>}
               <button onClick={()=>onRemove(i)} style={{background:'none',border:'none',cursor:'pointer',color:'#3b82f6',fontSize:15,lineHeight:1,padding:0}}>×</button>
@@ -1353,7 +1411,7 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
       <div style={{position:'relative',marginBottom:10}}>
         <input className="input" placeholder="Search any LabCorp test by name or code…" value={query} onChange={handleQuery}
           style={{paddingLeft:32}}/>
-        <Icon name="lab" size={14} cls="" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#94a3b8'}}/>
+        <Icon name="lab" size={14} cls="" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#a8a29e'}}/>
         {searching&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)'}}><Spinner/></span>}
       </div>
 
@@ -1363,9 +1421,9 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
           {categories.map(c=>(
             <button key={c} onClick={()=>handleCategory(c)}
               style={{fontSize:11,padding:'3px 10px',borderRadius:20,border:'1px solid',cursor:'pointer',
-                background:category===c?'#2563eb':'#f8fafc',
-                color:category===c?'#fff':'#64748b',
-                borderColor:category===c?'#2563eb':'#e2e8f0'}}>
+                background:category===c?'#0d9488':'#fafaf9',
+                color:category===c?'#fff':'#78716c',
+                borderColor:category===c?'#0d9488':'#e7e5e4'}}>
               {c}
             </button>
           ))}
@@ -1378,10 +1436,10 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
 
       {/* Source badge */}
       {source&&(
-        <div style={{fontSize:11,color:'#94a3b8',marginBottom:8}}>
+        <div style={{fontSize:11,color:'#a8a29e',marginBottom:8}}>
           {source==='live'
             ?<span style={{color:'#16a34a'}}>● Live LabCorp catalog</span>
-            :<span>● Local catalog · <a href="https://www.labcorp.com/tests" target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>Browse full LabCorp directory ↗</a></span>
+            :<span>● Local catalog · <a href="https://www.labcorp.com/tests" target="_blank" rel="noreferrer" style={{color:'#0d9488'}}>Browse full LabCorp directory ↗</a></span>
           }
         </div>
       )}
@@ -1389,7 +1447,7 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
       {/* Results grid */}
       <div style={{maxHeight:280,overflowY:'auto',border:'1px solid #e2e8f0',borderRadius:8,background:'#fafafa'}}>
         {results.length===0&&!searching&&(
-          <div style={{padding:20,textAlign:'center',color:'#94a3b8',fontSize:13}}>
+          <div style={{padding:20,textAlign:'center',color:'#a8a29e',fontSize:13}}>
             {query?'No tests found — try a different term or add a custom test below':'Loading…'}
           </div>
         )}
@@ -1399,18 +1457,18 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
             <div key={i} onClick={()=>sel?onRemove(selectedTests.findIndex(s=>s.name===t.name&&s.code===t.code)):onAdd(t)}
               style={{display:'flex',justifyContent:'space-between',alignItems:'center',
                 padding:'8px 12px',borderBottom:'1px solid #f1f5f9',cursor:'pointer',
-                background:sel?'#eff6ff':'transparent',
-                borderLeft:sel?'3px solid #2563eb':'3px solid transparent'}}>
+                background:sel?'#f0fdfa':'transparent',
+                borderLeft:sel?'3px solid #0d9488':'3px solid transparent'}}>
               <div>
-                <div style={{fontSize:13,fontWeight:sel?600:400,color:sel?'#1e40af':'#1e293b'}}>{t.name}</div>
-                <div style={{fontSize:11,color:'#94a3b8'}}>
+                <div style={{fontSize:13,fontWeight:sel?600:400,color:sel?'#0f766e':'#1c1917'}}>{t.name}</div>
+                <div style={{fontSize:11,color:'#a8a29e'}}>
                   {t.category}{t.specimen&&<> · {t.specimen}</>}
                   {t.tat&&<> · TAT: {t.tat}</>}
                 </div>
               </div>
               <div style={{display:'flex',alignItems:'center',gap:8,flexShrink:0}}>
-                {t.code&&<span style={{fontFamily:'monospace',fontSize:11,color:'#94a3b8'}}>#{t.code}</span>}
-                <span style={{fontSize:16,color:sel?'#2563eb':'#cbd5e1'}}>{sel?'✓':'+'}</span>
+                {t.code&&<span style={{fontFamily:'monospace',fontSize:11,color:'#a8a29e'}}>#{t.code}</span>}
+                <span style={{fontSize:16,color:sel?'#0d9488':'#d6d3d1'}}>{sel?'✓':'+'}</span>
               </div>
             </div>
           );
@@ -1424,7 +1482,7 @@ function LabTestPicker({token, selectedTests, onAdd, onRemove}){
             + Add custom test / unlisted code
           </button>
         ):(
-          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',background:'#f8fafc',padding:10,borderRadius:8,border:'1px dashed #cbd5e1'}}>
+          <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',background:'#fafaf9',padding:10,borderRadius:8,border:'1px dashed #cbd5e1'}}>
             <input className="input" placeholder="Test name *" value={customName} onChange={e=>setCustomName(e.target.value)} style={{flex:2,minWidth:160}}/>
             <input className="input" placeholder="LabCorp code (optional)" value={customCode} onChange={e=>setCustomCode(e.target.value)} style={{flex:1,minWidth:100}}/>
             <button className="btn btn-primary" style={{fontSize:12,padding:'5px 12px'}} onClick={addCustom}>Add</button>
@@ -1470,11 +1528,11 @@ function LabOrderForm({token,patient,onSave,onCancel}){
   };
 
   return(
-    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+    <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
       <h3 style={{fontWeight:700,marginBottom:12}}>New Lab Order — {patient.first_name} {patient.last_name}</h3>
       <form onSubmit={submit}>
         <div style={{marginBottom:16}}>
-          <label className="label" style={{marginBottom:8}}>Tests <span style={{color:'#94a3b8',fontWeight:400}}>({selectedTests.length} selected)</span></label>
+          <label className="label" style={{marginBottom:8}}>Tests <span style={{color:'#a8a29e',fontWeight:400}}>({selectedTests.length} selected)</span></label>
           <LabTestPicker token={token} selectedTests={selectedTests} onAdd={addTest} onRemove={removeTest}/>
         </div>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
@@ -1496,8 +1554,8 @@ function LabOrderForm({token,patient,onSave,onCancel}){
 }
 
 const IMAGING_STATUS={
-  ordered:          {color:'#64748b', bg:'#f1f5f9', label:'Ordered'},
-  faxed:            {color:'#2563eb', bg:'#eff6ff', label:'Faxed'},
+  ordered:          {color:'#78716c', bg:'#f5f5f4', label:'Ordered'},
+  faxed:            {color:'#0d9488', bg:'#f0fdfa', label:'Faxed'},
   scheduled:        {color:'#7c3aed', bg:'#f5f3ff', label:'Scheduled'},
   completed:        {color:'#0891b2', bg:'#ecfeff', label:'Completed'},
   results_received: {color:'#16a34a', bg:'#f0fdf4', label:'Results In'},
@@ -1551,7 +1609,7 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
   };
 
   const st=IMAGING_STATUS[order.status]||IMAGING_STATUS.ordered;
-  const priority_color=order.priority==='STAT'?'#dc2626':order.priority==='urgent'?'#d97706':'#64748b';
+  const priority_color=order.priority==='STAT'?'#dc2626':order.priority==='urgent'?'#d97706':'#78716c';
 
   return(
     <div className="card" style={{marginBottom:12}}>
@@ -1559,24 +1617,24 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
         <div style={{flex:1}}>
           <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
             <span style={{fontWeight:700,fontSize:15}}>🩻 {order.study_type}{order.body_part?' — '+order.body_part:''}</span>
-            <span style={{fontSize:12,fontWeight:600,color:priority_color,background:order.priority==='STAT'?'#fee2e2':order.priority==='urgent'?'#fef3c7':'#f1f5f9',borderRadius:4,padding:'1px 6px'}}>{order.priority?.toUpperCase()}</span>
+            <span style={{fontSize:12,fontWeight:600,color:priority_color,background:order.priority==='STAT'?'#fee2e2':order.priority==='urgent'?'#fef3c7':'#f5f5f4',borderRadius:4,padding:'1px 6px'}}>{order.priority?.toUpperCase()}</span>
             <span style={{fontSize:12,fontWeight:600,color:st.color,background:st.bg,borderRadius:4,padding:'1px 6px'}}>{st.label}</span>
           </div>
-          <div style={{fontSize:13,color:'#64748b',marginBottom:2}}>
+          <div style={{fontSize:13,color:'#78716c',marginBottom:2}}>
             {order.facility&&<span>🏥 {order.facility}</span>}
             {order.fax_number&&<span style={{marginLeft:8}}>📠 {order.fax_number}</span>}
             {order.cpt_code&&<span style={{marginLeft:8}}>CPT: {order.cpt_code}</span>}
             <span style={{marginLeft:8}}>📅 {order.created_at?.slice(0,10)}</span>
           </div>
-          {order.clinical_indication&&<div style={{fontSize:13,color:'#475569',marginBottom:2}}>Indication: {order.clinical_indication}</div>}
+          {order.clinical_indication&&<div style={{fontSize:13,color:'#57534e',marginBottom:2}}>Indication: {order.clinical_indication}</div>}
           {order.fax_status&&order.fax_status!=='pending'&&(
-            <div style={{fontSize:12,color:'#94a3b8',marginTop:2,cursor:'pointer'}} onClick={refreshFax}>
+            <div style={{fontSize:12,color:'#a8a29e',marginTop:2,cursor:'pointer'}} onClick={refreshFax}>
               Fax: {FAX_STATUS_ICON[order.fax_status]||''} {order.fax_status} {order.fax_sent_at&&'· '+order.fax_sent_at.slice(0,10)} <span style={{color:'#93c5fd',fontSize:11}}>(refresh)</span>
             </div>
           )}
           {order.scheduled_at&&<div style={{fontSize:12,color:'#7c3aed',marginTop:2}}>📅 Scheduled: {order.scheduled_at.slice(0,10)}</div>}
           {order.results_received_at&&<div style={{fontSize:12,color:'#16a34a',marginTop:2}}>✅ Results received: {order.results_received_at.slice(0,10)}</div>}
-          {order.result_notes&&<div style={{fontSize:13,color:'#1e293b',marginTop:4,background:'#f0fdf4',borderRadius:4,padding:'6px 10px',border:'1px solid #bbf7d0'}}><b>Report:</b> {order.result_notes}</div>}
+          {order.result_notes&&<div style={{fontSize:13,color:'#1c1917',marginTop:4,background:'#f0fdf4',borderRadius:4,padding:'6px 10px',border:'1px solid #bbf7d0'}}><b>Report:</b> {order.result_notes}</div>}
           {order.result_file_data&&(
             <button className="btn btn-outline" style={{fontSize:12,padding:'3px 10px',marginTop:4}}
               onClick={()=>{
@@ -1608,7 +1666,7 @@ function ImagingOrderCard({order:initial, token, onUpdate}){
         </div>
       </div>
       {showResults&&(
-        <div style={{marginTop:12,background:'#f8fafc',borderRadius:6,padding:12,border:'1px solid #e2e8f0'}}>
+        <div style={{marginTop:12,background:'#fafaf9',borderRadius:6,padding:12,border:'1px solid #e2e8f0'}}>
           <div style={{fontWeight:600,marginBottom:8}}>📋 Enter Results / Radiology Report</div>
           <textarea className="input" rows={4} style={{width:'100%',marginBottom:8}} placeholder="Radiologist impression / findings…" value={resultNotes} onChange={e=>setResultNotes(e.target.value)}/>
           <div style={{marginBottom:8}}>
@@ -1671,7 +1729,7 @@ function ICD10Search({selected, onChange}){
       {selected.length>0&&(
         <div style={{display:'flex',flexWrap:'wrap',gap:4,marginBottom:6}}>
           {selected.map(s=>(
-            <span key={s.code} style={{display:'inline-flex',alignItems:'center',gap:4,background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:4,padding:'2px 8px',fontSize:12,color:'#1d4ed8'}}>
+            <span key={s.code} style={{display:'inline-flex',alignItems:'center',gap:4,background:'#f0fdfa',border:'1px solid #bfdbfe',borderRadius:4,padding:'2px 8px',fontSize:12,color:'#1d4ed8'}}>
               <b>{s.code}</b> {s.desc}
               <button type="button" onClick={()=>remove(s.code)} style={{background:'none',border:'none',cursor:'pointer',color:'#93c5fd',fontSize:14,lineHeight:1,padding:'0 0 0 2px'}}>×</button>
             </span>
@@ -1688,7 +1746,7 @@ function ICD10Search({selected, onChange}){
           placeholder="Type diagnosis name or ICD-10 code…"
           autoComplete="off"
         />
-        {searching&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#94a3b8'}}>searching…</span>}
+        {searching&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#a8a29e'}}>searching…</span>}
         {showDrop&&(
           <div style={{position:'absolute',top:'100%',left:0,right:0,background:'white',border:'1px solid #e2e8f0',borderRadius:6,boxShadow:'0 4px 12px rgba(0,0,0,0.1)',zIndex:100,maxHeight:220,overflowY:'auto'}}>
             {results.map(item=>(
@@ -1698,8 +1756,8 @@ function ICD10Search({selected, onChange}){
                 onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
                 onMouseLeave={e=>e.currentTarget.style.background='white'}
               >
-                <span style={{fontWeight:700,color:'#2563eb',marginRight:8}}>{item.code}</span>
-                <span style={{color:'#374151'}}>{item.desc}</span>
+                <span style={{fontWeight:700,color:'#0d9488',marginRight:8}}>{item.code}</span>
+                <span style={{color:'#44403c'}}>{item.desc}</span>
               </div>
             ))}
           </div>
@@ -1729,7 +1787,7 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
   };
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
-    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+    <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
       <h3 style={{fontWeight:700,marginBottom:10}}>New Imaging Order — {patient.first_name} {patient.last_name}</h3>
       {/* Patient demographics summary */}
       <div style={{background:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:13}}>
@@ -1770,15 +1828,15 @@ function ImagingOrderForm({token,patient,onSave,onCancel}){
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:2000,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div style={{background:'#fff',borderRadius:16,padding:32,maxWidth:400,width:'90%',boxShadow:'0 25px 60px rgba(0,0,0,.3)'}}>
             <div style={{fontSize:40,textAlign:'center',marginBottom:12}}>📠</div>
-            <h3 style={{fontWeight:700,fontSize:18,color:'#1e293b',textAlign:'center',marginBottom:8}}>Confirm Fax Destination</h3>
-            <p style={{fontSize:14,color:'#475569',textAlign:'center',marginBottom:6}}>
+            <h3 style={{fontWeight:700,fontSize:18,color:'#1c1917',textAlign:'center',marginBottom:8}}>Confirm Fax Destination</h3>
+            <p style={{fontSize:14,color:'#57534e',textAlign:'center',marginBottom:6}}>
               This imaging order will be automatically faxed to:
             </p>
             <div style={{background:'#f0f9ff',border:'2px solid #0ea5e9',borderRadius:10,padding:'12px 20px',textAlign:'center',margin:'12px 0 20px',fontFamily:'monospace',fontSize:20,fontWeight:700,color:'#0369a1',letterSpacing:2}}>
               {form.fax_number}
             </div>
-            {form.facility&&<p style={{fontSize:13,color:'#64748b',textAlign:'center',marginBottom:20}}>Facility: <b>{form.facility}</b></p>}
-            <p style={{fontSize:12,color:'#94a3b8',textAlign:'center',marginBottom:20}}>
+            {form.facility&&<p style={{fontSize:13,color:'#78716c',textAlign:'center',marginBottom:20}}>Facility: <b>{form.facility}</b></p>}
+            <p style={{fontSize:12,color:'#a8a29e',textAlign:'center',marginBottom:20}}>
               Please verify this is the correct fax number before sending. Misdirected faxes may expose PHI.
             </p>
             <div style={{display:'flex',gap:10,justifyContent:'center'}}>
@@ -1801,7 +1859,7 @@ function FaxForm({token,patient,onSave,onCancel}){
     catch(e){toast(e.message,'error');}setSaving(false);};
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
-    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+    <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
       <h3 style={{fontWeight:700,marginBottom:12}}>Send Fax</h3>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
@@ -1825,15 +1883,15 @@ function MembershipForm({token,patient,onSave,onCancel}){
     try{const d=await api('POST','/api/memberships',{...form,patient_id:patient.id},token);if(d){toast('Membership created');onSave(d);}}
     catch(e){toast(e.message,'error');}setSaving(false);};
   return(
-    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+    <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
       <h3 style={{fontWeight:700,marginBottom:12}}>New Membership</h3>
       <form onSubmit={submit}>
         <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:12}}>
           {plans.map(p=>(
-            <label key={p.name} style={{padding:'10px 16px',borderRadius:10,border:`2px solid ${form.plan_name===p.name?'#2563eb':'#e2e8f0'}`,cursor:'pointer',background:form.plan_name===p.name?'#dbeafe':'#fff'}}>
+            <label key={p.name} style={{padding:'10px 16px',borderRadius:10,border:`2px solid ${form.plan_name===p.name?'#0d9488':'#e7e5e4'}`,cursor:'pointer',background:form.plan_name===p.name?'#ccfbf1':'#fff'}}>
               <input type="radio" name="plan" hidden checked={form.plan_name===p.name} onChange={()=>setForm({...form,plan_name:p.name,price_monthly:p.price})}/>
               <div style={{fontWeight:600}}>{p.name}</div>
-              <div style={{fontSize:13,color:'#64748b'}}>${p.price}/mo</div>
+              <div style={{fontSize:13,color:'#78716c'}}>${p.price}/mo</div>
             </label>
           ))}
         </div>
@@ -1859,7 +1917,7 @@ const SIG_TEMPLATES=[
   {label:'Sublingual',        sig:'Place 1 tablet under tongue as needed; may repeat in 5 min × 2'},
 ];
 
-const DEA_COLORS={II:'#dc2626',III:'#d97706',IV:'#d97706',V:'#64748b'};
+const DEA_COLORS={II:'#dc2626',III:'#d97706',IV:'#d97706',V:'#78716c'};
 
 function PrescribingTab({token,patient,user}){
   const toast=useToast();
@@ -1939,8 +1997,8 @@ function PrescribingTab({token,patient,user}){
   };
 
   const STATUS_STYLE={
-    draft:     {bg:'#f1f5f9',color:'#64748b',label:'Draft'},
-    signed:    {bg:'#dbeafe',color:'#1d4ed8',label:'Signed'},
+    draft:     {bg:'#f5f5f4',color:'#78716c',label:'Draft'},
+    signed:    {bg:'#ccfbf1',color:'#1d4ed8',label:'Signed'},
     transmitted:{bg:'#dcfce7',color:'#15803d',label:'Transmitted'},
     filled:    {bg:'#d1fae5',color:'#065f46',label:'Filled'},
     cancelled: {bg:'#fee2e2',color:'#dc2626',label:'Cancelled'},
@@ -1954,7 +2012,7 @@ function PrescribingTab({token,patient,user}){
           <div className="modal" style={{maxWidth:400}} onClick={e=>e.stopPropagation()}>
             <div style={{padding:'24px 28px'}}>
               <h2 style={{fontWeight:700,fontSize:17,marginBottom:4}}>EPCS Authentication Required</h2>
-              <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>
+              <p style={{fontSize:13,color:'#78716c',marginBottom:16}}>
                 <b>{showEpcs.drug_name}</b> is a Schedule {showEpcs.dea_schedule} controlled substance.<br/>
                 Enter your two-factor authentication code to sign this prescription electronically.
               </p>
@@ -1981,7 +2039,7 @@ function PrescribingTab({token,patient,user}){
 
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
         <div>
-          <span style={{fontSize:13,color:'#64748b'}}>{rxList.filter(r=>r.status!=='cancelled').length} active prescriptions</span>
+          <span style={{fontSize:13,color:'#78716c'}}>{rxList.filter(r=>r.status!=='cancelled').length} active prescriptions</span>
         </div>
         <button className="btn btn-primary" onClick={()=>{setEditRx(null);setShowForm(true);}}>
           <Icon name="pill" size={15}/>New Prescription
@@ -1999,7 +2057,7 @@ function PrescribingTab({token,patient,user}){
       )}
 
       {rxList.length===0&&!showForm&&(
-        <div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No prescriptions yet</div>
+        <div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No prescriptions yet</div>
       )}
 
       {rxList.map(rx=>{
@@ -2007,13 +2065,13 @@ function PrescribingTab({token,patient,user}){
         const isControlled=rx.is_controlled||rx.dea_schedule;
         return(
           <div key={rx.id} className="card" style={{marginBottom:10,
-            borderLeft:`4px solid ${isControlled?DEA_COLORS[rx.dea_schedule]||'#d97706':'#e2e8f0'}`}}>
+            borderLeft:`4px solid ${isControlled?DEA_COLORS[rx.dea_schedule]||'#d97706':'#e7e5e4'}`}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:8}}>
               <div style={{flex:1}}>
                 <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:3}}>
                   <span style={{fontWeight:700,fontSize:15}}>{rx.drug_name}</span>
-                  {rx.strength&&<span style={{fontSize:13,color:'#475569'}}>{rx.strength}</span>}
-                  {rx.dosage_form&&<span style={{fontSize:12,color:'#94a3b8'}}>({rx.dosage_form})</span>}
+                  {rx.strength&&<span style={{fontSize:13,color:'#57534e'}}>{rx.strength}</span>}
+                  {rx.dosage_form&&<span style={{fontSize:12,color:'#a8a29e'}}>({rx.dosage_form})</span>}
                   {isControlled&&(
                     <span style={{fontSize:11,fontWeight:700,padding:'2px 7px',borderRadius:10,
                       background:DEA_COLORS[rx.dea_schedule]+'22',color:DEA_COLORS[rx.dea_schedule]}}>
@@ -2021,28 +2079,28 @@ function PrescribingTab({token,patient,user}){
                     </span>
                   )}
                 </div>
-                <div style={{fontSize:13,color:'#475569',marginBottom:2}}>{rx.sig||'—'}</div>
-                <div style={{fontSize:12,color:'#94a3b8'}}>
+                <div style={{fontSize:13,color:'#57534e',marginBottom:2}}>{rx.sig||'—'}</div>
+                <div style={{fontSize:12,color:'#a8a29e'}}>
                   Qty: {rx.quantity} {rx.quantity_unit} · {rx.days_supply}d · Refills: {rx.refills}
                   {rx.daw&&<span style={{marginLeft:8,fontWeight:600,color:'#7c3aed'}}>DAW</span>}
                 </div>
-                {rx.pharmacy_name&&<div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>
+                {rx.pharmacy_name&&<div style={{fontSize:12,color:'#a8a29e',marginTop:2}}>
                   <span>🏪 {rx.pharmacy_name}</span>
                   {rx.pharmacy_phone&&<span style={{marginLeft:8}}>{rx.pharmacy_phone}</span>}
                   {rx.pharmacy_fax&&<span style={{marginLeft:8}}>Fax: {rx.pharmacy_fax}</span>}
                 </div>}
-                <div style={{fontSize:11,color:'#94a3b8',marginTop:2,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                <div style={{fontSize:11,color:'#a8a29e',marginTop:2,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
                   {rx.prescriber_name&&<span>Prescriber: {rx.prescriber_name}</span>}
                   {rx.signed_at&&<span>Signed: {rx.signed_at?.slice(0,10)}</span>}
                   {rx.eprescribe_platform==='weno'&&(()=>{
                     const WENO_STATUS={
-                      sent:                  {icon:'📤',color:'#2563eb',label:'Sent via WENO'},
+                      sent:                  {icon:'📤',color:'#0d9488',label:'Sent via WENO'},
                       routed:                {icon:'🔀',color:'#7c3aed',label:'Routed to Pharmacy'},
                       delivered:             {icon:'✅',color:'#16a34a',label:'Pharmacy Confirmed'},
                       error:                 {icon:'⚠️',color:'#dc2626',label:'WENO Error'},
                       cancelled_by_pharmacy: {icon:'🚫',color:'#dc2626',label:'Pharmacy Cancelled'},
                     };
-                    const ws=WENO_STATUS[rx.eprescribe_status]||{icon:'📋',color:'#2563eb',label:'WENO e-Rx'};
+                    const ws=WENO_STATUS[rx.eprescribe_status]||{icon:'📋',color:'#0d9488',label:'WENO e-Rx'};
                     return<span style={{color:ws.color}}>{ws.icon} {ws.label}</span>;
                   })()}
                   {rx.eprescribe_platform==='telnyx-fax'&&
@@ -2052,12 +2110,12 @@ function PrescribingTab({token,patient,user}){
                   {rx.fax_status&&(()=>{
                     const FAX_BADGE={
                       queued:    {bg:'#fef9c3',color:'#92400e',label:'📠 Fax Queued'},
-                      processing:{bg:'#dbeafe',color:'#1e40af',label:'📠 Processing'},
-                      sending:   {bg:'#dbeafe',color:'#1e40af',label:'📠 Sending…'},
+                      processing:{bg:'#ccfbf1',color:'#0f766e',label:'📠 Processing'},
+                      sending:   {bg:'#ccfbf1',color:'#0f766e',label:'📠 Sending…'},
                       delivered: {bg:'#dcfce7',color:'#15803d',label:'📠 Fax Delivered ✓'},
                       failed:    {bg:'#fee2e2',color:'#dc2626',label:'📠 Fax Failed ✗'},
                     };
-                    const fb=FAX_BADGE[rx.fax_status]||{bg:'#f1f5f9',color:'#64748b',label:`📠 ${rx.fax_status}`};
+                    const fb=FAX_BADGE[rx.fax_status]||{bg:'#f5f5f4',color:'#78716c',label:`📠 ${rx.fax_status}`};
                     return(
                       <span style={{padding:'1px 8px',borderRadius:10,fontSize:11,background:fb.bg,color:fb.color,cursor:'pointer'}}
                         onClick={()=>refreshFaxStatus(rx.id)} title="Click to refresh fax status">
@@ -2076,7 +2134,7 @@ function PrescribingTab({token,patient,user}){
                     <button className="btn btn-outline" style={{fontSize:11,padding:'3px 9px'}}
                       onClick={()=>{setEditRx(rx);setShowForm(true);}}>Edit</button>
                     <button className="btn btn-primary" style={{fontSize:11,padding:'3px 9px',
-                      background:isControlled?'#dc2626':'#2563eb'}}
+                      background:isControlled?'#dc2626':'#0d9488'}}
                       onClick={()=>signRx(rx)}>
                       {isControlled?'⚠ Sign (EPCS)':'Sign'}
                     </button>
@@ -2234,8 +2292,8 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
   ];
 
   return(
-    <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
-      <h3 style={{fontWeight:700,fontSize:15,marginBottom:14,color:'#1e293b'}}>
+    <div className="card" style={{marginBottom:16,border:'2px solid var(--accent)'}}>
+      <h3 style={{fontWeight:700,fontSize:15,marginBottom:14,color:'#1c1917'}}>
         {rx?'Edit Prescription':'New Prescription'} — {patient.first_name} {patient.last_name}
       </h3>
       <form onSubmit={submit}>
@@ -2260,14 +2318,14 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
               <div style={{position:'absolute',zIndex:999,background:'#fff',border:'1px solid #e2e8f0',
                 borderRadius:8,boxShadow:'0 4px 20px rgba(0,0,0,.1)',width:'100%',maxHeight:220,overflowY:'auto',top:'calc(100% + 4px)'}}>
                 {drugResults.length===0
-                  ?<div style={{padding:'10px 12px',fontSize:13,color:'#94a3b8'}}>No results found</div>
+                  ?<div style={{padding:'10px 12px',fontSize:13,color:'#a8a29e'}}>No results found</div>
                   :drugResults.map((d,i)=>(
                     <div key={i} onMouseDown={()=>selectDrug(d)}
                       style={{padding:'8px 12px',cursor:'pointer',fontSize:13,borderBottom:'1px solid #f8fafc'}}
                       onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                       <span style={{fontWeight:500}}>{d.name}</span>
-                      {d.tty&&<span style={{fontSize:11,color:'#94a3b8',marginLeft:8}}>{d.tty}</span>}
+                      {d.tty&&<span style={{fontSize:11,color:'#a8a29e',marginLeft:8}}>{d.tty}</span>}
                     </div>
                   ))
                 }
@@ -2277,13 +2335,13 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
           {/* Related forms/strengths */}
           {relatedForms.length>0&&(
             <div style={{marginTop:6}}>
-              <div style={{fontSize:11,color:'#94a3b8',marginBottom:4}}>Select strength / form:</div>
+              <div style={{fontSize:11,color:'#a8a29e',marginBottom:4}}>Select strength / form:</div>
               <div style={{display:'flex',flexWrap:'wrap',gap:5}}>
                 {relatedForms.slice(0,12).map((r,i)=>(
                   <button key={i} type="button"
                     style={{fontSize:11,padding:'3px 9px',borderRadius:20,border:'1px solid #e2e8f0',
-                      cursor:'pointer',background:form.rxcui===r.rxcui?'#dbeafe':'#f8fafc',
-                      color:form.rxcui===r.rxcui?'#1e40af':'#475569'}}
+                      cursor:'pointer',background:form.rxcui===r.rxcui?'#ccfbf1':'#fafaf9',
+                      color:form.rxcui===r.rxcui?'#0f766e':'#57534e'}}
                     onClick={()=>selectRelated(r)}>
                     {r.name.replace(form.drug_name.split(' ')[0],'').trim()||r.name}
                   </button>
@@ -2305,8 +2363,8 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
             {SIG_TEMPLATES.map(t=>(
               <button key={t.label} type="button"
                 style={{fontSize:11,padding:'3px 9px',borderRadius:20,border:'1px solid #e2e8f0',
-                  cursor:'pointer',background:form.sig===t.sig?'#dbeafe':'#f8fafc',
-                  color:form.sig===t.sig?'#1e40af':'#475569'}}
+                  cursor:'pointer',background:form.sig===t.sig?'#ccfbf1':'#fafaf9',
+                  color:form.sig===t.sig?'#0f766e':'#57534e'}}
                 onClick={()=>setForm(f=>({...f,sig:t.sig}))}>
                 {t.label}
               </button>
@@ -2349,9 +2407,9 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
               {savedPharmacies.slice(0,8).map(ph=>(
                 <button key={ph.id} type="button"
                   style={{fontSize:11,padding:'4px 10px',borderRadius:20,border:'1px solid',cursor:'pointer',
-                    background:form.pharmacy_name===ph.name?'#dbeafe':'#f8fafc',
-                    color:form.pharmacy_name===ph.name?'#1e40af':'#475569',
-                    borderColor:form.pharmacy_name===ph.name?'#93c5fd':'#e2e8f0'}}
+                    background:form.pharmacy_name===ph.name?'#ccfbf1':'#fafaf9',
+                    color:form.pharmacy_name===ph.name?'#0f766e':'#57534e',
+                    borderColor:form.pharmacy_name===ph.name?'#93c5fd':'#e7e5e4'}}
                   onClick={()=>selectPharmacy(ph)}>
                   {ph.name}
                 </button>
@@ -2364,8 +2422,8 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
               {CHAINS.map(c=>(
                 <button key={c.name} type="button"
                   style={{fontSize:11,padding:'4px 10px',borderRadius:20,border:'1px solid #e2e8f0',cursor:'pointer',
-                    background:form.pharmacy_name===c.name?'#dbeafe':'#f8fafc',
-                    color:form.pharmacy_name===c.name?'#1e40af':'#475569'}}
+                    background:form.pharmacy_name===c.name?'#ccfbf1':'#fafaf9',
+                    color:form.pharmacy_name===c.name?'#0f766e':'#57534e'}}
                   onClick={()=>setForm(f=>({...f,pharmacy_name:c.name}))}>
                   {c.name}
                 </button>
@@ -2387,7 +2445,7 @@ function PrescriptionForm({token,patient,rx,onSave,onCancel}){
             {showAddPharmacy?'Cancel':'+ Save this pharmacy to directory'}
           </button>
           {showAddPharmacy&&(
-            <div style={{marginTop:8,padding:12,background:'#f8fafc',borderRadius:8,border:'1px dashed #cbd5e1'}}>
+            <div style={{marginTop:8,padding:12,background:'#fafaf9',borderRadius:8,border:'1px dashed #cbd5e1'}}>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
                 {[['Name *','name'],['Phone','phone'],['Fax','fax'],['NPI','npi'],['Address','address']].map(([l,k])=>(
                   <div key={k}><label className="label" style={{fontSize:11}}>{l}</label>
@@ -2452,17 +2510,17 @@ function HistoryMedsTab({token,patient}){
     {type:'surgical', label:'Surgical History',           color:'#7c3aed'},
     {type:'family',   label:'Family History',             color:'#0891b2'},
     {type:'social',   label:'Social History',             color:'#16a34a'},
-    {type:'immunization',label:'Immunizations',           color:'#2563eb'},
+    {type:'immunization',label:'Immunizations',           color:'#0d9488'},
   ];
 
-  const statusColors={active:'#16a34a',resolved:'#64748b',inactive:'#94a3b8'};
+  const statusColors={active:'#16a34a',resolved:'#78716c',inactive:'#a8a29e'};
 
   return(
     <div>
       {/* ── MEDICATIONS ── */}
       <div className="card" style={{marginBottom:16}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-          <h3 style={{fontSize:15,fontWeight:700,color:'#1e293b'}}>💊 Active Medications</h3>
+          <h3 style={{fontSize:15,fontWeight:700,color:'#1c1917'}}>💊 Active Medications</h3>
           <button className="btn btn-primary" style={{fontSize:12,padding:'5px 12px'}} onClick={()=>{setEditMed(null);setShowMedForm(true);}}>+ Add Medication</button>
         </div>
 
@@ -2474,16 +2532,16 @@ function HistoryMedsTab({token,patient}){
         )}
 
         {meds.filter(m=>m.is_active).length===0&&!showMedForm&&(
-          <div style={{color:'#94a3b8',fontSize:14,padding:'8px 0'}}>No active medications on file</div>
+          <div style={{color:'#a8a29e',fontSize:14,padding:'8px 0'}}>No active medications on file</div>
         )}
         {meds.filter(m=>m.is_active).map(m=>(
           <div key={m.id} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'10px 0',borderBottom:'1px solid #f1f5f9'}}>
             <div>
               <span style={{fontWeight:600,fontSize:14}}>{m.name}</span>
-              {m.dosage&&<span style={{color:'#475569',fontSize:13,marginLeft:8}}>{m.dosage}</span>}
-              {m.frequency&&<span style={{color:'#475569',fontSize:13,marginLeft:6}}>· {m.frequency}</span>}
-              {m.route&&m.route!=='oral'&&<span style={{color:'#94a3b8',fontSize:12,marginLeft:6}}>({m.route})</span>}
-              <div style={{fontSize:12,color:'#94a3b8',marginTop:3}}>
+              {m.dosage&&<span style={{color:'#57534e',fontSize:13,marginLeft:8}}>{m.dosage}</span>}
+              {m.frequency&&<span style={{color:'#57534e',fontSize:13,marginLeft:6}}>· {m.frequency}</span>}
+              {m.route&&m.route!=='oral'&&<span style={{color:'#a8a29e',fontSize:12,marginLeft:6}}>({m.route})</span>}
+              <div style={{fontSize:12,color:'#a8a29e',marginTop:3}}>
                 {m.indication&&<span>Indication: {m.indication}</span>}
                 {m.prescriber&&<span style={{marginLeft:10}}>Prescriber: {m.prescriber}</span>}
               </div>
@@ -2497,7 +2555,7 @@ function HistoryMedsTab({token,patient}){
 
         {meds.filter(m=>!m.is_active).length>0&&(
           <details style={{marginTop:10}}>
-            <summary style={{fontSize:12,color:'#94a3b8',cursor:'pointer',userSelect:'none'}}>
+            <summary style={{fontSize:12,color:'#a8a29e',cursor:'pointer',userSelect:'none'}}>
               Discontinued ({meds.filter(m=>!m.is_active).length})
             </summary>
             {meds.filter(m=>!m.is_active).map(m=>(
@@ -2515,7 +2573,7 @@ function HistoryMedsTab({token,patient}){
         <div key={type} className="card" style={{marginBottom:12}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
             <h3 style={{fontSize:14,fontWeight:700,color}}>{label}
-              <span style={{fontWeight:400,color:'#94a3b8',fontSize:12,marginLeft:8}}>({hxByType(type).length})</span>
+              <span style={{fontWeight:400,color:'#a8a29e',fontSize:12,marginLeft:8}}>({hxByType(type).length})</span>
             </h3>
             <button className="btn btn-outline" style={{fontSize:11,padding:'3px 10px'}}
               onClick={()=>{setShowHistoryForm(showHistoryForm===type?null:type);setEditHistory(null);}}>
@@ -2531,18 +2589,18 @@ function HistoryMedsTab({token,patient}){
           )}
 
           {hxByType(type).length===0&&showHistoryForm!==type&&(
-            <div style={{color:'#94a3b8',fontSize:13}}>None recorded</div>
+            <div style={{color:'#a8a29e',fontSize:13}}>None recorded</div>
           )}
           {hxByType(type).map(h=>(
             <div key={h.id} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'8px 0',borderBottom:'1px solid #f8fafc'}}>
               <div>
                 <span style={{fontWeight:500,fontSize:14}}>{h.description}</span>
-                {h.detail&&<span style={{fontSize:13,color:'#64748b',marginLeft:8}}>— {h.detail}</span>}
-                {h.onset_date&&<span style={{fontSize:12,color:'#94a3b8',marginLeft:8}}>({h.onset_date})</span>}
+                {h.detail&&<span style={{fontSize:13,color:'#78716c',marginLeft:8}}>— {h.detail}</span>}
+                {h.onset_date&&<span style={{fontSize:12,color:'#a8a29e',marginLeft:8}}>({h.onset_date})</span>}
                 {h.status&&h.status!=='active'&&(
-                  <span style={{marginLeft:8,fontSize:11,padding:'2px 7px',borderRadius:10,background:'#f1f5f9',color:statusColors[h.status]||'#64748b'}}>{h.status}</span>
+                  <span style={{marginLeft:8,fontSize:11,padding:'2px 7px',borderRadius:10,background:'#f5f5f4',color:statusColors[h.status]||'#78716c'}}>{h.status}</span>
                 )}
-                {h.notes&&<div style={{fontSize:12,color:'#94a3b8',marginTop:2}}>{h.notes}</div>}
+                {h.notes&&<div style={{fontSize:12,color:'#a8a29e',marginTop:2}}>{h.notes}</div>}
               </div>
               <div style={{display:'flex',gap:6,flexShrink:0}}>
                 <button className="btn btn-outline" style={{fontSize:11,padding:'3px 10px'}} onClick={()=>{setEditHistory(h);setShowHistoryForm(type);}}>Edit</button>
@@ -2581,8 +2639,8 @@ function MedicationForm({token,patient,med,onSave,onCancel}){
   };
 
   return(
-    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
-      <h4 style={{fontWeight:600,fontSize:14,marginBottom:12,color:'#1e293b'}}>{med?'Edit Medication':'Add Medication'}</h4>
+    <div style={{background:'#fafaf9',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
+      <h4 style={{fontWeight:600,fontSize:14,marginBottom:12,color:'#1c1917'}}>{med?'Edit Medication':'Add Medication'}</h4>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div><label className="label">Name *</label><input className="input" value={form.name} onChange={F('name')} placeholder="e.g. Lisinopril"/></div>
@@ -2646,7 +2704,7 @@ function HistoryEntryForm({token,patient,entryType,entry,onSave,onCancel}){
   };
 
   return(
-    <div style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
+    <div style={{background:'#fafaf9',border:'1px solid #e2e8f0',borderRadius:10,padding:16,marginBottom:12}}>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:10}}>
           <div style={{gridColumn:'span 2'}}>
@@ -2711,9 +2769,9 @@ async function initSquareCard(appId,locationId,containerEl){
   const payments=Square.payments(appId,locationId);
   const card=await payments.card({
     style:{
-      '.input-container':{borderColor:'#e2e8f0',borderRadius:'8px'},
+      '.input-container':{borderColor:'#e7e5e4',borderRadius:'8px'},
       '.input-container.is-focus':{borderColor:'#006aff'},
-      input:{fontSize:'15px',color:'#374151'},
+      input:{fontSize:'15px',color:'#44403c'},
     }
   });
   await card.attach(containerEl);
@@ -2788,14 +2846,14 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
             <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
               <span style={{fontSize:22}}>💳</span> Card Payment (Square)
             </h2>
-            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#a8a29e',lineHeight:1}}>✕</button>
           </div>
 
           {step==='form'&&(
             <form onSubmit={proceedToCard}>
               <div style={{marginBottom:14}}>
                 <label className="label">Patient</label>
-                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+                <div style={{padding:'9px 12px',background:'#fafaf9',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
               </div>
               <div style={{marginBottom:14}}>
                 <label className="label">Amount (USD) *</label>
@@ -2819,7 +2877,7 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
               <div style={{marginBottom:16,padding:'12px 16px',background:'#e8f0fe',borderRadius:8,border:'1px solid #bfdbfe'}}>
                 <div style={{fontSize:11,color:'#006aff',fontWeight:600,marginBottom:2}}>CHARGING</div>
                 <div style={{fontWeight:800,fontSize:22,color:'#1d4ed8'}}>${parseFloat(amount).toFixed(2)}</div>
-                {description&&<div style={{fontSize:13,color:'#64748b',marginTop:2}}>{description}</div>}
+                {description&&<div style={{fontSize:13,color:'#78716c',marginTop:2}}>{description}</div>}
               </div>
               <div style={{marginBottom:16}}>
                 <label className="label">Card Details</label>
@@ -2831,7 +2889,7 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
                 </button>
                 <button className="btn btn-secondary" onClick={()=>{setStep('form');if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}}}>Back</button>
               </div>
-              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#a8a29e'}}>
                 🔒 Secured by Square — card numbers never touch our server
               </div>
             </div>
@@ -2841,7 +2899,7 @@ function SquarePaymentModal({token,patient,onClose,onSave}){
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>✅</div>
               <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Successful!</div>
-              <div style={{color:'#64748b',marginBottom:20}}>${parseFloat(amount).toFixed(2)} collected via Square</div>
+              <div style={{color:'#78716c',marginBottom:20}}>${parseFloat(amount).toFixed(2)} collected via Square</div>
               <button className="btn btn-success" onClick={onClose}>Done</button>
             </div>
           )}
@@ -2918,24 +2976,24 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
             <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
               <span style={{fontSize:22}}>💳</span> Subscribe with Square
             </h2>
-            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#a8a29e',lineHeight:1}}>✕</button>
           </div>
 
           {step==='plan'&&(
             <form onSubmit={proceedToCard}>
               <div style={{marginBottom:14}}>
                 <label className="label">Patient</label>
-                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
+                <div style={{padding:'9px 12px',background:'#fafaf9',borderRadius:8,fontSize:14}}>{patient.first_name} {patient.last_name}</div>
               </div>
               <div style={{marginBottom:20}}>
                 <label className="label">Select Plan</label>
                 <div style={{display:'flex',gap:10,flexWrap:'wrap',marginTop:8}}>
                   {plans.map(p=>(
-                    <label key={p.name} style={{flex:'1 1 120px',padding:'12px 16px',borderRadius:10,border:`2px solid ${selectedPlan.name===p.name?'#006aff':'#e2e8f0'}`,cursor:'pointer',background:selectedPlan.name===p.name?'#e8f0fe':'#fff',textAlign:'center'}}>
+                    <label key={p.name} style={{flex:'1 1 120px',padding:'12px 16px',borderRadius:10,border:`2px solid ${selectedPlan.name===p.name?'#006aff':'#e7e5e4'}`,cursor:'pointer',background:selectedPlan.name===p.name?'#e8f0fe':'#fff',textAlign:'center'}}>
                       <input type="radio" name="plan" hidden checked={selectedPlan.name===p.name} onChange={()=>setSelectedPlan(p)}/>
-                      <div style={{fontWeight:700,color:selectedPlan.name===p.name?'#006aff':'#1e293b'}}>{p.name}</div>
-                      <div style={{fontSize:20,fontWeight:800,color:selectedPlan.name===p.name?'#1d4ed8':'#374151',margin:'4px 0'}}>${p.price}</div>
-                      <div style={{fontSize:11,color:'#94a3b8'}}>per month</div>
+                      <div style={{fontWeight:700,color:selectedPlan.name===p.name?'#006aff':'#1c1917'}}>{p.name}</div>
+                      <div style={{fontSize:20,fontWeight:800,color:selectedPlan.name===p.name?'#1d4ed8':'#44403c',margin:'4px 0'}}>${p.price}</div>
+                      <div style={{fontSize:11,color:'#a8a29e'}}>per month</div>
                     </label>
                   ))}
                 </div>
@@ -2957,7 +3015,7 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
               <div style={{marginBottom:16,padding:'12px 16px',background:'#e8f0fe',borderRadius:8,border:'1px solid #bfdbfe'}}>
                 <div style={{fontSize:11,color:'#006aff',fontWeight:600,marginBottom:2}}>SUBSCRIBING</div>
                 <div style={{fontWeight:800,fontSize:20,color:'#1d4ed8'}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
-                <div style={{fontSize:13,color:'#64748b',marginTop:2}}>First charge today, card saved for future months</div>
+                <div style={{fontSize:13,color:'#78716c',marginTop:2}}>First charge today, card saved for future months</div>
               </div>
               <div style={{marginBottom:16}}>
                 <label className="label">Card Details</label>
@@ -2969,7 +3027,7 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
                 </button>
                 <button className="btn btn-secondary" onClick={()=>{setStep('plan');if(cardRef.current){try{cardRef.current.destroy();}catch(_){}cardRef.current=null;}}}>Back</button>
               </div>
-              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+              <div style={{marginTop:12,textAlign:'center',fontSize:11,color:'#a8a29e'}}>
                 🔒 Secured by Square · Cancel anytime in the Memberships tab
               </div>
             </div>
@@ -2979,8 +3037,8 @@ function SquareMembershipModal({token,patient,onClose,onSave}){
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>🎉</div>
               <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Subscription Active!</div>
-              <div style={{color:'#64748b',marginBottom:4}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
-              <div style={{color:'#94a3b8',fontSize:13,marginBottom:20}}>Patient charged via Square · Card saved for monthly billing</div>
+              <div style={{color:'#78716c',marginBottom:4}}>{selectedPlan.name} Plan — ${selectedPlan.price}/mo</div>
+              <div style={{color:'#a8a29e',fontSize:13,marginBottom:20}}>Patient charged via Square · Card saved for monthly billing</div>
               <button className="btn btn-success" onClick={onClose}>Done</button>
             </div>
           )}
@@ -3069,7 +3127,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
               <span style={{fontSize:20,background:'#f7931a',borderRadius:6,padding:'2px 8px',color:'#fff',fontWeight:900}}>⚡</span>
               Crypto Payment (Zaprite)
             </h2>
-            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8',lineHeight:1}}>✕</button>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#a8a29e',lineHeight:1}}>✕</button>
           </div>
 
           {/* Step: form */}
@@ -3077,7 +3135,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
             <form onSubmit={createOrder}>
               <div style={{marginBottom:14}}>
                 <label className="label">Patient</label>
-                <div style={{padding:'9px 12px',background:'#f8fafc',borderRadius:8,fontSize:14,color:'#374151',border:'1px solid #e2e8f0'}}>
+                <div style={{padding:'9px 12px',background:'#fafaf9',borderRadius:8,fontSize:14,color:'#44403c',border:'1px solid #e2e8f0'}}>
                   {patient.first_name} {patient.last_name}
                 </div>
               </div>
@@ -3100,7 +3158,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
                 </button>
                 <button className="btn btn-secondary" type="button" onClick={onClose}>Cancel</button>
               </div>
-              <div style={{marginTop:10,textAlign:'center',fontSize:11,color:'#94a3b8'}}>
+              <div style={{marginTop:10,textAlign:'center',fontSize:11,color:'#a8a29e'}}>
                 🔒 Powered by Zaprite · Bitcoin &amp; Lightning supported
               </div>
             </form>
@@ -3110,14 +3168,14 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
           {step==='waiting'&&(
             <div style={{textAlign:'center',padding:'12px 0'}}>
               <div style={{fontSize:48,marginBottom:12}}>⏳</div>
-              <div style={{fontWeight:700,fontSize:16,color:'#1e293b',marginBottom:8}}>
+              <div style={{fontWeight:700,fontSize:16,color:'#1c1917',marginBottom:8}}>
                 Zaprite Checkout Opened
               </div>
-              <div style={{color:'#64748b',fontSize:14,marginBottom:16}}>{statusMsg}</div>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:20,color:'#64748b',fontSize:13}}>
+              <div style={{color:'#78716c',fontSize:14,marginBottom:16}}>{statusMsg}</div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,marginBottom:20,color:'#78716c',fontSize:13}}>
                 <Spinner/> Checking payment status every 10 seconds…
               </div>
-              <div style={{background:'#f8fafc',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#475569',textAlign:'left'}}>
+              <div style={{background:'#fafaf9',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#57534e',textAlign:'left'}}>
                 <div style={{fontWeight:600,marginBottom:4}}>💡 Lightning payments confirm instantly.</div>
                 <div>On-chain Bitcoin typically confirms within a few minutes.</div>
               </div>
@@ -3127,7 +3185,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
                 </button>
                 <button className="btn btn-secondary" onClick={onClose}>Close (keep waiting)</button>
               </div>
-              <div style={{marginTop:12,fontSize:11,color:'#94a3b8'}}>
+              <div style={{marginTop:12,fontSize:11,color:'#a8a29e'}}>
                 Amount: <strong>${parseFloat(amount).toFixed(2)}</strong> · Order: {orderId?.slice(0,8)}…
               </div>
             </div>
@@ -3138,10 +3196,10 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>✅</div>
               <div style={{fontWeight:700,fontSize:20,color:'#16a34a',marginBottom:8}}>Payment Confirmed!</div>
-              <div style={{color:'#64748b',marginBottom:4}}>
+              <div style={{color:'#78716c',marginBottom:4}}>
                 ${parseFloat(amount).toFixed(2)} received via Zaprite
               </div>
-              <div style={{color:'#94a3b8',fontSize:13,marginBottom:20}}>
+              <div style={{color:'#a8a29e',fontSize:13,marginBottom:20}}>
                 {description||'Medical payment'} · Payment recorded in history
               </div>
               <button className="btn btn-success" onClick={onClose}>Done</button>
@@ -3153,7 +3211,7 @@ function ZapritePaymentModal({token,patient,onClose,onSave}){
             <div style={{textAlign:'center',padding:'24px 0'}}>
               <div style={{fontSize:52,marginBottom:12}}>❌</div>
               <div style={{fontWeight:700,fontSize:20,color:'#dc2626',marginBottom:8}}>Payment Failed</div>
-              <div style={{color:'#64748b',marginBottom:20}}>{statusMsg}</div>
+              <div style={{color:'#78716c',marginBottom:20}}>{statusMsg}</div>
               <div style={{display:'flex',gap:8,justifyContent:'center'}}>
                 <button className="btn btn-primary" style={{background:'#f7931a'}} onClick={()=>setStep('form')}>Try Again</button>
                 <button className="btn btn-secondary" onClick={onClose}>Close</button>
@@ -3175,7 +3233,7 @@ function PaymentForm({token,patient,onSave,onCancel}){
     catch(e){toast(e.message,'error');}setSaving(false);};
   const s=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   return(
-    <div className="card" style={{marginTop:12,border:'2px solid #2563eb'}}>
+    <div className="card" style={{marginTop:12,border:'2px solid var(--accent)'}}>
       <h3 style={{fontWeight:700,marginBottom:12}}>Record Payment — {patient.first_name} {patient.last_name}</h3>
       <form onSubmit={submit}>
         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
@@ -3210,11 +3268,11 @@ function FaxCenter({token}){
   return(
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Fax Center</h1>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917'}}>Fax Center</h1>
         <button className="btn btn-primary" onClick={()=>setShowForm(true)}><Icon name="send" size={15}/>Send Fax</button>
       </div>
       {showForm&&(
-        <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
+        <div className="card" style={{marginBottom:16,border:'2px solid var(--accent)'}}>
           <h3 style={{fontWeight:700,marginBottom:12}}>Compose Fax</h3>
           <form onSubmit={send}>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
@@ -3231,15 +3289,15 @@ function FaxCenter({token}){
         </div>
       )}
       <div className="card">
-        {faxes.length===0?<div style={{textAlign:'center',color:'#94a3b8',padding:40}}>No faxes yet</div>:faxes.map(f=>(
+        {faxes.length===0?<div style={{textAlign:'center',color:'#a8a29e',padding:40}}>No faxes yet</div>:faxes.map(f=>(
           <div key={f.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <div style={{width:36,height:36,borderRadius:8,background:f.direction==='sent'?'#dbeafe':'#dcfce7',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              <div style={{width:36,height:36,borderRadius:8,background:f.direction==='sent'?'#ccfbf1':'#dcfce7',display:'flex',alignItems:'center',justifyContent:'center'}}>
                 <Icon name={f.direction==='sent'?'send':'fax'} size={16}/>
               </div>
               <div>
                 <div style={{fontWeight:500,fontSize:14}}>{f.subject||'(no subject)'}</div>
-                <div style={{fontSize:12,color:'#94a3b8'}}>{f.direction==='sent'?'To':'From'}: {f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
+                <div style={{fontSize:12,color:'#a8a29e'}}>{f.direction==='sent'?'To':'From'}: {f.direction==='sent'?f.to_number:f.from_number} · {f.pages}pp · {f.created_at?.slice(0,10)}</div>
               </div>
             </div>
             {statusBadge(f.status)}
@@ -3381,7 +3439,7 @@ function Settings({token,user}){
 
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:20}}>Settings</h1>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:20}}>Settings</h1>
       <div style={{display:'flex',gap:0,borderBottom:'2px solid #e2e8f0',marginBottom:16}}>
         {user.role==='admin'&&<button className={`tab${tab==='users'?' active':''}`} onClick={()=>setTab('users')}>Users</button>}
         {user.role==='admin'&&<button className={`tab${tab==='audit'?' active':''}`} onClick={()=>{setTab('audit');refreshAlerts();}}>
@@ -3399,7 +3457,7 @@ function Settings({token,user}){
             <button className="btn btn-primary" onClick={()=>setShowForm(true)}><Icon name="plus" size={15}/>Add User</button>
           </div>
           {showForm&&(
-            <div className="card" style={{marginBottom:16,border:'2px solid #2563eb'}}>
+            <div className="card" style={{marginBottom:16,border:'2px solid var(--accent)'}}>
               <h3 style={{fontWeight:700,marginBottom:12}}>New User</h3>
               <form onSubmit={createUser}>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}>
@@ -3417,8 +3475,8 @@ function Settings({token,user}){
             {users.map(u=>(
               <div key={u.id} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'12px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
                 <div>
-                  <div style={{fontWeight:500}}>{u.full_name} <span style={{fontSize:12,color:'#94a3b8'}}>@{u.username}</span></div>
-                  <div style={{fontSize:13,color:'#64748b'}}>{u.specialty} · NPI: {u.npi_number||'—'}</div>
+                  <div style={{fontWeight:500}}>{u.full_name} <span style={{fontSize:12,color:'#a8a29e'}}>@{u.username}</span></div>
+                  <div style={{fontSize:13,color:'#78716c'}}>{u.specialty} · NPI: {u.npi_number||'—'}</div>
                   <span className={`badge ${u.role==='admin'?'badge-red':u.role==='physician'?'badge-blue':'badge-gray'}`}>{u.role}</span>
                 </div>
                 <button className={`btn ${u.is_active?'btn-warning':'btn-success'}`} onClick={()=>toggleActive(u)} style={{fontSize:12}}>
@@ -3436,7 +3494,7 @@ function Settings({token,user}){
           {secAlerts.length>0&&(
             <div style={{marginBottom:16}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
-                <h3 style={{fontWeight:700,color:'#1e293b',fontSize:15}}>⚠ Security Alerts ({secAlerts.length})</h3>
+                <h3 style={{fontWeight:700,color:'#1c1917',fontSize:15}}>⚠ Security Alerts ({secAlerts.length})</h3>
                 <button className="btn btn-outline" style={{fontSize:12}} onClick={refreshAlerts}>Refresh</button>
               </div>
               {secAlerts.map((a,i)=>(
@@ -3449,8 +3507,8 @@ function Settings({token,user}){
                   <span style={{fontSize:18,flexShrink:0}}>{a.severity==='high'?'🔴':'🟡'}</span>
                   <div style={{flex:1}}>
                     <div style={{fontWeight:600,fontSize:14,color:a.severity==='high'?'#dc2626':'#92400e'}}>{a.message}</div>
-                    <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{a.detail}</div>
-                    <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{a.timestamp?.slice(0,19).replace('T',' ')} UTC</div>
+                    <div style={{fontSize:12,color:'#78716c',marginTop:2}}>{a.detail}</div>
+                    <div style={{fontSize:11,color:'#a8a29e',marginTop:2}}>{a.timestamp?.slice(0,19).replace('T',' ')} UTC</div>
                   </div>
                   <span style={{
                     fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:10,
@@ -3472,15 +3530,15 @@ function Settings({token,user}){
             <h3 style={{fontWeight:600,marginBottom:12}}>HIPAA Audit Log (last 500 events)</h3>
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
               <thead><tr style={{borderBottom:'2px solid #e2e8f0'}}>
-                {['Timestamp','User','Action','Resource','Details'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:'#475569',fontWeight:600}}>{h}</th>)}
+                {['Timestamp','User','Action','Resource','Details'].map(h=><th key={h} style={{padding:'8px 10px',textAlign:'left',color:'#57534e',fontWeight:600}}>{h}</th>)}
               </tr></thead>
               <tbody>{logs.map(l=>(
                 <tr key={l.id} className="table-row" style={{borderBottom:'1px solid #f1f5f9'}}>
-                  <td style={{padding:'8px 10px',whiteSpace:'nowrap',color:'#64748b'}}>{l.timestamp?.slice(0,19).replace('T',' ')}</td>
+                  <td style={{padding:'8px 10px',whiteSpace:'nowrap',color:'#78716c'}}>{l.timestamp?.slice(0,19).replace('T',' ')}</td>
                   <td style={{padding:'8px 10px'}}>{l.user_id}</td>
                   <td style={{padding:'8px 10px'}}><span className="badge badge-blue">{l.action}</span></td>
                   <td style={{padding:'8px 10px'}}>{l.resource_type} #{l.resource_id}</td>
-                  <td style={{padding:'8px 10px',color:'#94a3b8',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
+                  <td style={{padding:'8px 10px',color:'#a8a29e',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{l.details}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -3502,8 +3560,8 @@ function Settings({token,user}){
           {/* Password change */}
           <div className="card">
             <h3 style={{fontWeight:600,marginBottom:4}}>Change Password</h3>
-            <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Logged in as: <b>{user.full_name}</b> ({user.role})</p>
-            <p style={{fontSize:12,color:'#64748b',marginBottom:12,background:'#f8fafc',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0'}}>
+            <p style={{fontSize:13,color:'#78716c',marginBottom:16}}>Logged in as: <b>{user.full_name}</b> ({user.role})</p>
+            <p style={{fontSize:12,color:'#78716c',marginBottom:12,background:'#fafaf9',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0'}}>
               Password must be at least 12 characters and include uppercase, lowercase, a number, and a special character.
             </p>
             <form onSubmit={changePw}>
@@ -3522,7 +3580,7 @@ function Settings({token,user}){
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
               <div>
                 <h3 style={{fontWeight:600,marginBottom:2}}>Two-Factor Authentication</h3>
-                <p style={{fontSize:13,color:'#64748b'}}>
+                <p style={{fontSize:13,color:'#78716c'}}>
                   {mfaEnabled
                     ?<span style={{color:'#16a34a',fontWeight:600}}>✓ Enabled — your account is protected by TOTP</span>
                     :'Add an extra layer of security with an authenticator app.'}
@@ -3552,15 +3610,15 @@ function Settings({token,user}){
 
             {!mfaEnabled&&mfaSetup&&(
               <div>
-                <p style={{fontSize:13,color:'#475569',marginBottom:12}}>
+                <p style={{fontSize:13,color:'#57534e',marginBottom:12}}>
                   Scan this QR code with <b>Google Authenticator</b>, <b>Authy</b>, or any TOTP app, then enter the 6-digit code below.
                 </p>
                 <div style={{display:'flex',gap:20,alignItems:'flex-start',flexWrap:'wrap',marginBottom:16}}>
                   <img src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(mfaSetup.uri)}`}
                     alt="MFA QR code" style={{border:'1px solid #e2e8f0',borderRadius:8,width:160,height:160}}/>
                   <div style={{flex:1,minWidth:200}}>
-                    <p style={{fontSize:12,color:'#64748b',marginBottom:6}}>Or enter this key manually:</p>
-                    <div style={{fontFamily:'monospace',fontSize:13,background:'#f8fafc',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0',wordBreak:'break-all',letterSpacing:1}}>
+                    <p style={{fontSize:12,color:'#78716c',marginBottom:6}}>Or enter this key manually:</p>
+                    <div style={{fontFamily:'monospace',fontSize:13,background:'#fafaf9',padding:'8px 12px',borderRadius:6,border:'1px solid #e2e8f0',wordBreak:'break-all',letterSpacing:1}}>
                       {mfaSetup.secret}
                     </div>
                   </div>
@@ -3584,26 +3642,26 @@ function Settings({token,user}){
         <div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:16,flexWrap:'wrap',gap:8}}>
             <div>
-              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>HIPAA Policies & Procedures</h2>
-              <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Six administrative safeguard policies — version 1.0 · Effective March 20, 2026 · Next review March 20, 2027</p>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1c1917',margin:0}}>HIPAA Policies & Procedures</h2>
+              <p style={{fontSize:13,color:'#78716c',marginTop:4}}>Six administrative safeguard policies — version 1.0 · Effective March 20, 2026 · Next review March 20, 2027</p>
             </div>
             <span style={{fontSize:12,background:'#dcfce7',color:'#15803d',fontWeight:600,padding:'4px 10px',borderRadius:20}}>6 Policies Active</span>
           </div>
 
-          {!policiesLoaded&&<div style={{textAlign:'center',padding:40,color:'#94a3b8'}}><Spinner/></div>}
+          {!policiesLoaded&&<div style={{textAlign:'center',padding:40,color:'#a8a29e'}}><Spinner/></div>}
 
           <div style={{display:'flex',flexDirection:'column',gap:12}}>
             {policies.map(pol=>(
               <div key={pol.id} className="card" style={{padding:0,overflow:'hidden'}}>
                 {/* Header bar */}
-                <div style={{background:'#1e3a5f',padding:'12px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
+                <div style={{background:'var(--sidebar)',padding:'12px 18px',display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
                   <div style={{display:'flex',gap:10,alignItems:'center'}}>
-                    <span style={{fontFamily:'monospace',fontSize:11,background:'rgba(255,255,255,.15)',color:'#e2e8f0',padding:'2px 8px',borderRadius:4}}>{pol.id}</span>
+                    <span style={{fontFamily:'monospace',fontSize:11,background:'rgba(255,255,255,.15)',color:'#e7e5e4',padding:'2px 8px',borderRadius:4}}>{pol.id}</span>
                     <span style={{fontWeight:700,fontSize:15,color:'#fff'}}>{pol.title}</span>
                   </div>
                   <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                    <span style={{fontSize:11,color:'#94a3b8'}}>v{pol.version}</span>
-                    <button className="btn" style={{fontSize:12,padding:'4px 12px',background:'#fff',color:'#1e3a5f',fontWeight:600,border:'none'}}
+                    <span style={{fontSize:11,color:'#a8a29e'}}>v{pol.version}</span>
+                    <button className="btn" style={{fontSize:12,padding:'4px 12px',background:'#fff',color:'var(--sidebar)',fontWeight:600,border:'none'}}
                       onClick={()=>downloadPolicy(pol)}>
                       ⬇ Download .docx
                     </button>
@@ -3612,10 +3670,10 @@ function Settings({token,user}){
                 {/* Body */}
                 <div style={{padding:'14px 18px'}}>
                   <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:'6px 24px',marginBottom:10,fontSize:13}}>
-                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Regulatory Basis: </span><span style={{color:'#475569'}}>{pol.regulatory_basis}</span></div>
-                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Addresses: </span><span style={{color:'#475569'}}>{pol.risk_refs.join(', ')}</span></div>
-                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Owner: </span><span style={{color:'#475569'}}>{pol.owner}</span></div>
-                    <div><span style={{color:'#94a3b8',fontWeight:600}}>Next Review: </span><span style={{color:'#475569'}}>{pol.next_review}</span></div>
+                    <div><span style={{color:'#a8a29e',fontWeight:600}}>Regulatory Basis: </span><span style={{color:'#57534e'}}>{pol.regulatory_basis}</span></div>
+                    <div><span style={{color:'#a8a29e',fontWeight:600}}>Addresses: </span><span style={{color:'#57534e'}}>{pol.risk_refs.join(', ')}</span></div>
+                    <div><span style={{color:'#a8a29e',fontWeight:600}}>Owner: </span><span style={{color:'#57534e'}}>{pol.owner}</span></div>
+                    <div><span style={{color:'#a8a29e',fontWeight:600}}>Next Review: </span><span style={{color:'#57534e'}}>{pol.next_review}</span></div>
                   </div>
                   <p style={{fontSize:13,color:'#334155',margin:0,lineHeight:1.5}}>{pol.summary}</p>
                 </div>
@@ -3633,20 +3691,20 @@ function Settings({token,user}){
         <div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
             <div>
-              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>Workforce Training Records</h2>
-              <p style={{fontSize:13,color:'#64748b',margin:'4px 0 0'}}>POL-HIPAA-001 — Document HIPAA training completion for all staff</p>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1c1917',margin:0}}>Workforce Training Records</h2>
+              <p style={{fontSize:13,color:'#78716c',margin:'4px 0 0'}}>POL-HIPAA-001 — Document HIPAA training completion for all staff</p>
             </div>
           </div>
 
           {/* Training provider info box */}
-          <div style={{background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:14}}>
+          <div style={{background:'#f0fdfa',border:'1px solid #bfdbfe',borderRadius:8,padding:'12px 16px',marginBottom:16,display:'flex',alignItems:'center',gap:14}}>
             <span style={{fontSize:24,flexShrink:0}}>🎓</span>
             <div style={{flex:1}}>
-              <div style={{fontWeight:600,fontSize:14,color:'#1e40af'}}>Approved Training Provider: HIPAA Training US</div>
+              <div style={{fontWeight:600,fontSize:14,color:'#0f766e'}}>Approved Training Provider: HIPAA Training US</div>
               <div style={{fontSize:13,color:'#3b82f6',marginTop:2}}>Free course (~30 min) covering Privacy Rule, Security Rule &amp; Breach Notification. Free certificate included.</div>
             </div>
             <a href="https://hipaatraining.us/" target="_blank" rel="noopener noreferrer"
-              style={{flexShrink:0,background:'#2563eb',color:'#fff',padding:'8px 16px',borderRadius:6,fontSize:13,fontWeight:600,textDecoration:'none',whiteSpace:'nowrap'}}>
+              style={{flexShrink:0,background:'#0d9488',color:'#fff',padding:'8px 16px',borderRadius:6,fontSize:13,fontWeight:600,textDecoration:'none',whiteSpace:'nowrap'}}>
               Start Training →
             </a>
           </div>
@@ -3660,10 +3718,10 @@ function Settings({token,user}){
             return(
               <div>
                 <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:12,marginBottom:16}}>
-                  {[['Total Staff',allStaff.length,'#2563eb'],['Fully Compliant',fullyTrained,'#16a34a'],['Needs Training',allStaff.length-fullyTrained,allStaff.length-fullyTrained>0?'#dc2626':'#16a34a']].map(([l,v,c])=>(
+                  {[['Total Staff',allStaff.length,'#0d9488'],['Fully Compliant',fullyTrained,'#16a34a'],['Needs Training',allStaff.length-fullyTrained,allStaff.length-fullyTrained>0?'#dc2626':'#16a34a']].map(([l,v,c])=>(
                     <div key={l} className="card" style={{textAlign:'center',padding:'14px 10px'}}>
                       <div style={{fontSize:28,fontWeight:800,color:c}}>{v}</div>
-                      <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{l}</div>
+                      <div style={{fontSize:12,color:'#78716c',marginTop:2}}>{l}</div>
                     </div>
                   ))}
                 </div>
@@ -3678,7 +3736,7 @@ function Settings({token,user}){
                           <span style={{fontSize:18}}>{compliant?'✅':'⚠️'}</span>
                           <div>
                             <div style={{fontWeight:600,fontSize:14}}>{staff.full_name}</div>
-                            <div style={{fontSize:12,color:'#64748b'}}>{staff.username} · {staff.role}</div>
+                            <div style={{fontSize:12,color:'#78716c'}}>{staff.username} · {staff.role}</div>
                           </div>
                         </div>
                         <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>{
@@ -3696,7 +3754,7 @@ function Settings({token,user}){
                               <span key={t}>
                                 {i>0&&', '}
                                 {opt?.url
-                                  ?<a href={opt.url} target="_blank" rel="noopener noreferrer" style={{color:'#2563eb',textDecoration:'underline'}}>{opt?.name||t}</a>
+                                  ?<a href={opt.url} target="_blank" rel="noopener noreferrer" style={{color:'#0d9488',textDecoration:'underline'}}>{opt?.name||t}</a>
                                   :<span style={{color:'#dc2626'}}>{opt?.name||t}</span>
                                 }
                               </span>
@@ -3706,13 +3764,13 @@ function Settings({token,user}){
                       )}
                       {staff.records.length>0&&(
                         <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,marginTop:6}}>
-                          <thead><tr style={{borderBottom:'1px solid #e2e8f0'}}>{['Training','Type','Completed','Notes',''].map(h=><th key={h} style={{padding:'4px 8px',textAlign:'left',color:'#475569'}}>{h}</th>)}</tr></thead>
+                          <thead><tr style={{borderBottom:'1px solid #e2e8f0'}}>{['Training','Type','Completed','Notes',''].map(h=><th key={h} style={{padding:'4px 8px',textAlign:'left',color:'#57534e'}}>{h}</th>)}</tr></thead>
                           <tbody>{staff.records.map(r=>(
                             <tr key={r.id} style={{borderBottom:'1px solid #f8fafc'}}>
                               <td style={{padding:'4px 8px'}}>{r.training_name}</td>
                               <td style={{padding:'4px 8px'}}><span className="badge badge-blue" style={{fontSize:10}}>{r.training_type}</span></td>
                               <td style={{padding:'4px 8px',whiteSpace:'nowrap'}}>{r.completed_at?.slice(0,10)}</td>
-                              <td style={{padding:'4px 8px',color:'#94a3b8',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.notes||'—'}</td>
+                              <td style={{padding:'4px 8px',color:'#a8a29e',maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.notes||'—'}</td>
                               <td style={{padding:'4px 8px'}}><button style={{fontSize:11,color:'#dc2626',background:'none',border:'none',cursor:'pointer'}} onClick={()=>delTrainingRecord(r.id)}>✕</button></td>
                             </tr>
                           ))}</tbody>
@@ -3725,7 +3783,7 @@ function Settings({token,user}){
                   <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
                     <div className="card" style={{width:480,maxWidth:'95vw'}}>
                       <h3 style={{fontWeight:700,marginBottom:4}}>Add Training Record</h3>
-                      <p style={{fontSize:13,color:'#64748b',marginBottom:16}}>Staff member: <b>{addModal.userName}</b></p>
+                      <p style={{fontSize:13,color:'#78716c',marginBottom:16}}>Staff member: <b>{addModal.userName}</b></p>
                       <form onSubmit={submitTrainingRecord}>
                         <div style={{marginBottom:12}}>
                           <label className="label">Training Type</label>
@@ -3735,7 +3793,7 @@ function Settings({token,user}){
                           </select>
                           {typeOptions.find(t=>t.type===addForm.training_type)?.url&&(
                             <a href={typeOptions.find(t=>t.type===addForm.training_type).url} target="_blank" rel="noopener noreferrer"
-                              style={{display:'inline-block',marginTop:6,fontSize:12,color:'#2563eb'}}>
+                              style={{display:'inline-block',marginTop:6,fontSize:12,color:'#0d9488'}}>
                               → Open training at {typeOptions.find(t=>t.type===addForm.training_type).provider}
                             </a>
                           )}
@@ -3770,20 +3828,20 @@ function Settings({token,user}){
         <div>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-end',marginBottom:16,flexWrap:'wrap',gap:8}}>
             <div>
-              <h2 style={{fontWeight:700,fontSize:18,color:'#1e293b',margin:0}}>Security Posture Dashboard</h2>
-              <p style={{fontSize:13,color:'#64748b',marginTop:4}}>Live status of all technical and administrative controls from the HIPAA Risk Analysis</p>
+              <h2 style={{fontWeight:700,fontSize:18,color:'#1c1917',margin:0}}>Security Posture Dashboard</h2>
+              <p style={{fontSize:13,color:'#78716c',marginTop:4}}>Live status of all technical and administrative controls from the HIPAA Risk Analysis</p>
             </div>
             <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>setSecStatus(null)}>↻ Refresh</button>
           </div>
 
-          {!secStatus&&<div style={{textAlign:'center',padding:40,color:'#94a3b8'}}><Spinner/></div>}
+          {!secStatus&&<div style={{textAlign:'center',padding:40,color:'#a8a29e'}}><Spinner/></div>}
           {secStatus&&(()=>{
             const Check=({ok,label,detail})=>(
               <div style={{display:'flex',alignItems:'flex-start',gap:10,padding:'8px 0',borderBottom:'1px solid #f1f5f9'}}>
                 <span style={{fontSize:16,minWidth:20}}>{ok===true?'✅':ok===false?'❌':'⚠️'}</span>
                 <div>
-                  <div style={{fontWeight:500,fontSize:13,color:'#1e293b'}}>{label}</div>
-                  {detail&&<div style={{fontSize:12,color:'#64748b',marginTop:2}}>{detail}</div>}
+                  <div style={{fontWeight:500,fontSize:13,color:'#1c1917'}}>{label}</div>
+                  {detail&&<div style={{fontSize:12,color:'#78716c',marginTop:2}}>{detail}</div>}
                 </div>
               </div>
             );
@@ -3798,19 +3856,19 @@ function Settings({token,user}){
 
                 {/* MFA Adoption */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:12,color:'#1e293b'}}>🔐 MFA Adoption (Risk 7)</h3>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:12,color:'#1c1917'}}>🔐 MFA Adoption (Risk 7)</h3>
                   <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:12}}>
                     <div style={{position:'relative',width:72,height:72}}>
                       <svg viewBox="0 0 36 36" style={{transform:'rotate(-90deg)',width:72,height:72}}>
-                        <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e2e8f0" strokeWidth="3"/>
+                        <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e7e5e4" strokeWidth="3"/>
                         <circle cx="18" cy="18" r="15.9" fill="none" stroke={mfa.all_enrolled?'#16a34a':'#f59e0b'} strokeWidth="3"
                           strokeDasharray={`${mfa.percent} ${100-mfa.percent}`} strokeLinecap="round"/>
                       </svg>
-                      <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:15,color:'#1e293b'}}>{mfa.percent}%</div>
+                      <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:15,color:'#1c1917'}}>{mfa.percent}%</div>
                     </div>
                     <div>
                       <div style={{fontSize:22,fontWeight:800,color:mfa.all_enrolled?'#16a34a':'#f59e0b'}}>{mfa.enabled_count}/{mfa.total_staff}</div>
-                      <div style={{fontSize:12,color:'#64748b'}}>staff with MFA enabled</div>
+                      <div style={{fontSize:12,color:'#78716c'}}>staff with MFA enabled</div>
                     </div>
                   </div>
                   {!mfa.all_enrolled&&<div style={{fontSize:12,background:'#fff7ed',border:'1px solid #fed7aa',borderRadius:6,padding:'8px 10px',color:'#92400e'}}>
@@ -3820,7 +3878,7 @@ function Settings({token,user}){
 
                 {/* Technical controls */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>⚙️ Technical Controls</h3>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>⚙️ Technical Controls</h3>
                   <Check ok={true}  label="Rate limiting on login endpoints" detail="5 failed attempts per IP per 10 minutes → HTTP 429 (Risk 9)"/>
                   <Check ok={true}  label="15-minute inactivity session timeout" detail="Client-side timer clears JWT on idle (Risk 8)"/>
                   <Check ok={true}  label="Password complexity enforced" detail="Min 12 chars, upper/lower/digit/special required (Risk 10)"/>
@@ -3832,8 +3890,8 @@ function Settings({token,user}){
 
                 {/* Environment variables */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>🔑 Secret Configuration (Risk 17)</h3>
-                  <p style={{fontSize:12,color:'#64748b',marginBottom:10}}>Shows whether each secret is configured in Railway environment variables. Values are never exposed.</p>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>🔑 Secret Configuration (Risk 17)</h3>
+                  <p style={{fontSize:12,color:'#78716c',marginBottom:10}}>Shows whether each secret is configured in Railway environment variables. Values are never exposed.</p>
                   {Object.entries(ev).map(([k,v])=>(
                     <Check key={k} ok={v} label={k} detail={v?'Configured':'⚠ Not set — check Railway environment variables'}/>
                   ))}
@@ -3841,14 +3899,14 @@ function Settings({token,user}){
 
                 {/* Manual verification */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📋 Manual Verification Required (Risks 13, 14)</h3>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>📋 Manual Verification Required (Risks 13, 14)</h3>
                   {Object.values(mv).map(item=>(
                     <div key={item.label} style={{padding:'8px 0',borderBottom:'1px solid #f1f5f9'}}>
                       <div style={{display:'flex',gap:8,alignItems:'flex-start'}}>
                         <span style={{fontSize:16,minWidth:20}}>⚠️</span>
                         <div>
-                          <div style={{fontWeight:500,fontSize:13,color:'#1e293b'}}>{item.label}</div>
-                          <div style={{fontSize:12,color:'#64748b',marginTop:2}}>{item.instructions}</div>
+                          <div style={{fontWeight:500,fontSize:13,color:'#1c1917'}}>{item.label}</div>
+                          <div style={{fontSize:12,color:'#78716c',marginTop:2}}>{item.instructions}</div>
                         </div>
                       </div>
                     </div>
@@ -3857,30 +3915,30 @@ function Settings({token,user}){
 
                 {/* BAA checklist */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📝 BAA Status (Risk 1 — Highest Priority)</h3>
-                  <p style={{fontSize:12,color:'#64748b',marginBottom:10}}>Mark each BAA as executed once signed. Until then, sharing ePHI with these vendors creates direct legal exposure.</p>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>📝 BAA Status (Risk 1 — Highest Priority)</h3>
+                  <p style={{fontSize:12,color:'#78716c',marginBottom:10}}>Mark each BAA as executed once signed. Until then, sharing ePHI with these vendors creates direct legal exposure.</p>
                   {baa.map(v=>(
                     <div key={v.vendor} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f1f5f9',flexWrap:'wrap',gap:8}}>
                       <div>
-                        <div style={{fontWeight:500,fontSize:13}}>{v.vendor} <span style={{fontSize:11,color:'#94a3b8'}}>— {v.service}</span></div>
+                        <div style={{fontWeight:500,fontSize:13}}>{v.vendor} <span style={{fontSize:11,color:'#a8a29e'}}>— {v.service}</span></div>
                         <span style={{fontSize:11,fontWeight:600,background:'#fee2e2',color:'#dc2626',borderRadius:4,padding:'1px 6px'}}>{v.priority}</span>
                       </div>
-                      <a href={v.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#2563eb',textDecoration:'none',fontWeight:500}}>Get BAA →</a>
+                      <a href={v.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:'#0d9488',textDecoration:'none',fontWeight:500}}>Get BAA →</a>
                     </div>
                   ))}
                 </div>
 
                 {/* Login activity */}
                 <div className="card">
-                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1e293b'}}>📊 Login Activity (Last 7 Days)</h3>
+                  <h3 style={{fontWeight:700,fontSize:15,marginBottom:8,color:'#1c1917'}}>📊 Login Activity (Last 7 Days)</h3>
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginTop:8}}>
                     <div style={{textAlign:'center',background:'#f0fdf4',borderRadius:8,padding:16}}>
                       <div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>{ac.successful_logins}</div>
-                      <div style={{fontSize:12,color:'#64748b'}}>Successful logins</div>
+                      <div style={{fontSize:12,color:'#78716c'}}>Successful logins</div>
                     </div>
-                    <div style={{textAlign:'center',background:ac.failed_logins>10?'#fee2e2':'#f8fafc',borderRadius:8,padding:16}}>
-                      <div style={{fontSize:28,fontWeight:800,color:ac.failed_logins>10?'#dc2626':'#64748b'}}>{ac.failed_logins}</div>
-                      <div style={{fontSize:12,color:'#64748b'}}>Failed login attempts</div>
+                    <div style={{textAlign:'center',background:ac.failed_logins>10?'#fee2e2':'#fafaf9',borderRadius:8,padding:16}}>
+                      <div style={{fontSize:28,fontWeight:800,color:ac.failed_logins>10?'#dc2626':'#78716c'}}>{ac.failed_logins}</div>
+                      <div style={{fontSize:12,color:'#78716c'}}>Failed login attempts</div>
                     </div>
                   </div>
                   {ac.failed_logins>10&&<div style={{marginTop:10,fontSize:12,color:'#dc2626',fontWeight:600}}>⚠ High number of failed logins — review audit log for brute-force attempts.</div>}
@@ -3899,7 +3957,7 @@ function Settings({token,user}){
 // SCHEDULING MODULE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const PROVIDER_COLORS=['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
+const PROVIDER_COLORS=['#0d9488','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
 const HOURS=Array.from({length:13},(_,i)=>i+7); // 7am–7pm
 const PX_PER_MIN=1; // 1px per minute → 60px per hour
 const DAY_START_MIN=7*60; // 7:00 AM in minutes
@@ -3945,23 +4003,23 @@ function MonthView({currentDate,appointments,providers,getProviderColor,onDayCli
   return(
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',borderBottom:'1px solid #e2e8f0'}}>
-        {DAYS.map(d=><div key={d} style={{padding:'8px 0',textAlign:'center',fontSize:12,fontWeight:600,color:'#64748b'}}>{d}</div>)}
+        {DAYS.map(d=><div key={d} style={{padding:'8px 0',textAlign:'center',fontSize:12,fontWeight:600,color:'#78716c'}}>{d}</div>)}
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)'}}>
         {cells.map((d,i)=>{
-          if(!d) return <div key={i} style={{minHeight:100,background:'#f8fafc',borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9'}}/>;
+          if(!d) return <div key={i} style={{minHeight:100,background:'#fafaf9',borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9'}}/>;
           const k=dateKey(d); const dayAppts=(apptsByDay[k]||[]).sort((a,b)=>a.start_time.localeCompare(b.start_time));
           const isToday=k===todayKey;
           return(
-            <div key={k} style={{minHeight:100,borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9',padding:4,cursor:'pointer',background:isToday?'#eff6ff':'#fff'}}
+            <div key={k} style={{minHeight:100,borderRight:'1px solid #f1f5f9',borderBottom:'1px solid #f1f5f9',padding:4,cursor:'pointer',background:isToday?'#f0fdfa':'#fff'}}
               onClick={()=>onDayClick(d)}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:3}}>
-                <span style={{fontSize:13,fontWeight:isToday?700:400,color:isToday?'#2563eb':'#374151',
-                  background:isToday?'#2563eb':'transparent',color:isToday?'#fff':'#374151',
+                <span style={{fontSize:13,fontWeight:isToday?700:400,color:isToday?'#0d9488':'#44403c',
+                  background:isToday?'#0d9488':'transparent',color:isToday?'#fff':'#44403c',
                   borderRadius:'50%',width:22,height:22,display:'flex',alignItems:'center',justifyContent:'center'}}>
                   {d.getDate()}
                 </span>
-                <button style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:16,lineHeight:1,padding:'0 2px'}}
+                <button style={{background:'none',border:'none',cursor:'pointer',color:'#a8a29e',fontSize:16,lineHeight:1,padding:'0 2px'}}
                   onClick={e=>{e.stopPropagation();onNewAppt({date:d});}}>+</button>
               </div>
               {dayAppts.slice(0,3).map(a=>(
@@ -3972,7 +4030,7 @@ function MonthView({currentDate,appointments,providers,getProviderColor,onDayCli
                   {fmtTime(a.start_time)} {a.title}
                 </div>
               ))}
-              {dayAppts.length>3&&<div style={{fontSize:10,color:'#64748b',paddingLeft:4}}>+{dayAppts.length-3} more</div>}
+              {dayAppts.length>3&&<div style={{fontSize:10,color:'#78716c',paddingLeft:4}}>+{dayAppts.length-3} more</div>}
             </div>
           );
         })}
@@ -3994,15 +4052,15 @@ function WeekView({currentDate,appointments,providers,apptTypes,getProviderColor
   return(
     <div className="card" style={{padding:0,overflow:'hidden'}}>
       {/* Header row */}
-      <div style={{display:'grid',gridTemplateColumns:'56px repeat(7,1fr)',borderBottom:'2px solid #e2e8f0',background:'#f8fafc'}}>
+      <div style={{display:'grid',gridTemplateColumns:'56px repeat(7,1fr)',borderBottom:'2px solid #e2e8f0',background:'#fafaf9'}}>
         <div/>
         {days.map((d,i)=>{
           const k=dateKey(d); const isToday=k===todayKey;
           return(
             <div key={k} style={{padding:'10px 4px',textAlign:'center',borderLeft:'1px solid #e2e8f0'}}>
-              <div style={{fontSize:11,color:'#64748b',fontWeight:500}}>{DAY_LABELS[i]}</div>
-              <div style={{fontSize:18,fontWeight:700,color:isToday?'#2563eb':'#1e293b',
-                background:isToday?'#eff6ff':'transparent',borderRadius:6,display:'inline-block',padding:'2px 8px'}}>
+              <div style={{fontSize:11,color:'#78716c',fontWeight:500}}>{DAY_LABELS[i]}</div>
+              <div style={{fontSize:18,fontWeight:700,color:isToday?'#0d9488':'#1c1917',
+                background:isToday?'#f0fdfa':'transparent',borderRadius:6,display:'inline-block',padding:'2px 8px'}}>
                 {d.getDate()}
               </div>
             </div>
@@ -4014,7 +4072,7 @@ function WeekView({currentDate,appointments,providers,apptTypes,getProviderColor
         {/* Hour labels */}
         <div style={{width:56,flexShrink:0,borderRight:'1px solid #e2e8f0'}}>
           {HOURS.map(h=>(
-            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 6px 0',fontSize:11,color:'#94a3b8',textAlign:'right'}}>
+            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 6px 0',fontSize:11,color:'#a8a29e',textAlign:'right'}}>
               {h===12?'12 PM':h<12?`${h} AM`:`${h-12} PM`}
             </div>
           ))}
@@ -4071,7 +4129,7 @@ function DayView({currentDate,appointments,providers,apptTypes,getProviderColor,
         <div style={{width:64,flexShrink:0,borderRight:'1px solid #e2e8f0'}}>
           <div style={{height:40,borderBottom:'1px solid #e2e8f0'}}/>
           {HOURS.map(h=>(
-            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 8px 0',fontSize:12,color:'#94a3b8',textAlign:'right'}}>
+            <div key={h} style={{height:60,borderBottom:'1px solid #f1f5f9',padding:'2px 8px 0',fontSize:12,color:'#a8a29e',textAlign:'right'}}>
               {h===12?'12 PM':h<12?`${h} AM`:`${h-12} PM`}
             </div>
           ))}
@@ -4086,7 +4144,7 @@ function DayView({currentDate,appointments,providers,apptTypes,getProviderColor,
                 {p.full_name}
               </span>
             ))}
-            {providers.length===0&&<span style={{fontSize:12,color:'#94a3b8'}}>No providers</span>}
+            {providers.length===0&&<span style={{fontSize:12,color:'#a8a29e'}}>No providers</span>}
           </div>
           {/* Hour slots */}
           <div style={{position:'relative',minHeight:780}}>
@@ -4119,20 +4177,20 @@ function DayView({currentDate,appointments,providers,apptTypes,getProviderColor,
       </div>
       {/* Today's agenda list */}
       {dayAppts.length===0?(
-        <div style={{textAlign:'center',padding:'32px',color:'#94a3b8',fontSize:14}}>No appointments scheduled · Click a time slot to add one</div>
+        <div style={{textAlign:'center',padding:'32px',color:'#a8a29e',fontSize:14}}>No appointments scheduled · Click a time slot to add one</div>
       ):(
         <div style={{borderTop:'1px solid #e2e8f0',padding:'12px 16px'}}>
-          <div style={{fontSize:12,fontWeight:600,color:'#64748b',marginBottom:8}}>AGENDA ({dayAppts.length})</div>
+          <div style={{fontSize:12,fontWeight:600,color:'#78716c',marginBottom:8}}>AGENDA ({dayAppts.length})</div>
           {dayAppts.map(a=>(
             <div key={a.id} onClick={()=>onApptClick(a)}
               style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',borderRadius:8,cursor:'pointer',marginBottom:4,border:'1px solid #f1f5f9'}}
-              onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+              onMouseEnter={e=>e.currentTarget.style.background='#fafaf9'}
               onMouseLeave={e=>e.currentTarget.style.background=''}>
               <div style={{width:4,height:40,borderRadius:2,background:a.color||getProviderColor(a.provider_id),flexShrink:0}}/>
               <div style={{flex:1}}>
                 <div style={{fontWeight:600,fontSize:14}}>{a.title}</div>
-                <div style={{fontSize:12,color:'#64748b'}}>{fmtTime(a.start_time)}–{fmtTime(a.end_time)} · {a.provider_name}</div>
-                {a.patient_name&&<div style={{fontSize:12,color:'#94a3b8'}}>{a.patient_name}</div>}
+                <div style={{fontSize:12,color:'#78716c'}}>{fmtTime(a.start_time)}–{fmtTime(a.end_time)} · {a.provider_name}</div>
+                {a.patient_name&&<div style={{fontSize:12,color:'#a8a29e'}}>{a.patient_name}</div>}
               </div>
               <span className={`badge ${a.status==='completed'?'badge-green':a.status==='confirmed'?'badge-blue':a.status==='cancelled'?'badge-red':'badge-yellow'}`} style={{fontSize:11}}>
                 {a.status}
@@ -4234,7 +4292,7 @@ function AppointmentModal({token,user,appointment,defaults,providers,apptTypes,p
             <h2 style={{fontWeight:700,fontSize:18,display:'flex',alignItems:'center',gap:8}}>
               <Icon name="calendar" size={20}/> {isEdit?'Edit Appointment':'New Appointment'}
             </h2>
-            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#94a3b8'}}>✕</button>
+            <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',fontSize:22,color:'#a8a29e'}}>✕</button>
           </div>
           <form onSubmit={submit}>
             {/* Appointment type */}
@@ -4261,10 +4319,10 @@ function AppointmentModal({token,user,appointment,defaults,providers,apptTypes,p
                   {filteredPatients.map(p=>(
                     <div key={p.id} onClick={()=>{s('patient_id')(p.id);setPatientSearch(`${p.first_name} ${p.last_name}`);setShowPatientList(false);}}
                       style={{padding:'8px 12px',cursor:'pointer',fontSize:14,borderBottom:'1px solid #f1f5f9'}}
-                      onMouseEnter={e=>e.currentTarget.style.background='#f8fafc'}
+                      onMouseEnter={e=>e.currentTarget.style.background='#fafaf9'}
                       onMouseLeave={e=>e.currentTarget.style.background=''}>
                       {p.first_name} {p.last_name}
-                      {p.dob&&<span style={{color:'#94a3b8',fontSize:12}}> · DOB {p.dob}</span>}
+                      {p.dob&&<span style={{color:'#a8a29e',fontSize:12}}> · DOB {p.dob}</span>}
                     </div>
                   ))}
                 </div>
@@ -4325,7 +4383,7 @@ function AppointmentModal({token,user,appointment,defaults,providers,apptTypes,p
 // ── Appointment Type Settings ─────────────────────────────────────────────────
 function AppointmentTypeSettings({token,apptTypes,setApptTypes,providers}){
   const toast=useToast();
-  const [form,setForm]=useState({name:'',duration_minutes:30,color:'#2563eb',description:''});
+  const [form,setForm]=useState({name:'',duration_minutes:30,color:'#0d9488',description:''});
   const [editId,setEditId]=useState(null);
   const [saving,setSaving]=useState(false);
   const sf=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
@@ -4339,7 +4397,7 @@ function AppointmentTypeSettings({token,apptTypes,setApptTypes,providers}){
       if(d){
         if(editId) setApptTypes(prev=>prev.map(t=>t.id===editId?d:t));
         else setApptTypes(prev=>[...prev,d]);
-        setForm({name:'',duration_minutes:30,color:'#2563eb',description:''});
+        setForm({name:'',duration_minutes:30,color:'#0d9488',description:''});
         setEditId(null);
         toast(editId?'Type updated':'Type created');
       }
@@ -4360,15 +4418,15 @@ function AppointmentTypeSettings({token,apptTypes,setApptTypes,providers}){
       <h3 style={{fontWeight:700,fontSize:15,marginBottom:14}}>⚙️ Appointment Types</h3>
       <div style={{display:'flex',flexWrap:'wrap',gap:8,marginBottom:16}}>
         {apptTypes.map(t=>(
-          <div key={t.id} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:8,background:'#f8fafc',border:'1px solid #e2e8f0'}}>
+          <div key={t.id} style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px',borderRadius:8,background:'#fafaf9',border:'1px solid #e2e8f0'}}>
             <div style={{width:12,height:12,borderRadius:3,background:t.color,flexShrink:0}}/>
             <span style={{fontSize:13,fontWeight:500}}>{t.name}</span>
-            <span style={{fontSize:11,color:'#94a3b8'}}>{t.duration_minutes}m</span>
-            <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',cursor:'pointer',color:'#64748b',padding:0,fontSize:12}}>✏️</button>
+            <span style={{fontSize:11,color:'#a8a29e'}}>{t.duration_minutes}m</span>
+            <button onClick={()=>startEdit(t)} style={{background:'none',border:'none',cursor:'pointer',color:'#78716c',padding:0,fontSize:12}}>✏️</button>
             <button onClick={()=>del(t.id)} style={{background:'none',border:'none',cursor:'pointer',color:'#dc2626',padding:0,fontSize:12}}>✕</button>
           </div>
         ))}
-        {apptTypes.length===0&&<span style={{fontSize:13,color:'#94a3b8'}}>No types yet — add one below</span>}
+        {apptTypes.length===0&&<span style={{fontSize:13,color:'#a8a29e'}}>No types yet — add one below</span>}
       </div>
       <form onSubmit={save}>
         <div style={{display:'grid',gridTemplateColumns:'1fr auto auto 2fr auto',gap:8,alignItems:'end'}}>
@@ -4395,7 +4453,7 @@ function AppointmentTypeSettings({token,apptTypes,setApptTypes,providers}){
             <button className="btn btn-primary" type="submit" disabled={saving}>{saving?<Spinner/>:editId?'Update':'Add'}</button>
           </div>
         </div>
-        {editId&&<button type="button" className="btn btn-secondary" style={{marginTop:8}} onClick={()=>{setEditId(null);setForm({name:'',duration_minutes:30,color:'#2563eb',description:''});}}>Cancel edit</button>}
+        {editId&&<button type="button" className="btn btn-secondary" style={{marginTop:8}} onClick={()=>{setEditId(null);setForm({name:'',duration_minutes:30,color:'#0d9488',description:''});}}>Cancel edit</button>}
       </form>
     </div>
   );
@@ -4418,7 +4476,7 @@ function ScheduleModule({token,user}){
 
   const getProviderColor=useCallback(pid=>{
     const idx=providers.findIndex(p=>p.id===pid);
-    return PROVIDER_COLORS[idx%PROVIDER_COLORS.length]||'#2563eb';
+    return PROVIDER_COLORS[idx%PROVIDER_COLORS.length]||'#0d9488';
   },[providers]);
 
   const loadAppointments=useCallback(async()=>{
@@ -4473,7 +4531,7 @@ function ScheduleModule({token,user}){
     <div>
       {/* Header */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:10}}>
-        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Schedule</h1>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917'}}>Schedule</h1>
         <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
           <select className="input" style={{width:'auto',fontSize:13,padding:'7px 10px'}} value={selectedProvider} onChange={e=>setSelectedProvider(e.target.value)}>
             <option value="all">All Providers</option>
@@ -4482,7 +4540,7 @@ function ScheduleModule({token,user}){
           <div style={{display:'flex',border:'1px solid #e2e8f0',borderRadius:8,overflow:'hidden'}}>
             {['day','week','month'].map(v=>(
               <button key={v} onClick={()=>setView(v)} style={{padding:'7px 14px',fontSize:13,fontWeight:500,
-                background:view===v?'#2563eb':'#fff',color:view===v?'#fff':'#475569',border:'none',cursor:'pointer',textTransform:'capitalize'}}>
+                background:view===v?'#0d9488':'#fff',color:view===v?'#fff':'#57534e',border:'none',cursor:'pointer',textTransform:'capitalize'}}>
                 {v}
               </button>
             ))}
@@ -4492,7 +4550,7 @@ function ScheduleModule({token,user}){
             <button className="btn btn-outline" style={{padding:'6px 12px',fontSize:13}} onClick={()=>setCurrentDate(new Date())}>Today</button>
             <button className="btn btn-outline" style={{padding:'6px 12px'}} onClick={()=>navigate(1)}>›</button>
           </div>
-          <span style={{fontSize:14,fontWeight:600,color:'#1e293b'}}>{rangeLabel()}</span>
+          <span style={{fontSize:14,fontWeight:600,color:'#1c1917'}}>{rangeLabel()}</span>
           <button className="btn btn-primary" onClick={()=>openNew()}><Icon name="plus" size={15}/>New Appointment</button>
           <button className="btn btn-outline" style={{padding:'7px 10px'}} onClick={()=>setShowSettings(s=>!s)} title="Manage appointment types"><Icon name="settings" size={15}/></button>
         </div>
@@ -4585,10 +4643,10 @@ function EnrollmentManager({token}){
 
   const STATUS_BADGE={
     pending:         {bg:'#fef9c3',color:'#92400e',label:'Pending'},
-    payment_pending: {bg:'#dbeafe',color:'#1e40af',label:'Awaiting Payment'},
+    payment_pending: {bg:'#ccfbf1',color:'#0f766e',label:'Awaiting Payment'},
     active:          {bg:'#dcfce7',color:'#15803d',label:'Active'},
     rejected:        {bg:'#fee2e2',color:'#dc2626',label:'Rejected'},
-    cancelled:       {bg:'#f1f5f9',color:'#64748b',label:'Cancelled'},
+    cancelled:       {bg:'#f5f5f4',color:'#78716c',label:'Cancelled'},
   };
 
   const enrollUrl=`${window.location.origin}/enroll`;
@@ -4596,11 +4654,11 @@ function EnrollmentManager({token}){
   return(
     <div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}}>
-        <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b'}}>Enrollment</h1>
+        <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917'}}>Enrollment</h1>
         <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          <span style={{fontSize:13,color:'#64748b'}}>Patient Enrollment Link:</span>
-          <a href={enrollUrl} target="_blank" style={{fontSize:13,color:'#2563eb',textDecoration:'none',
-            background:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:6,padding:'4px 10px'}}>
+          <span style={{fontSize:13,color:'#78716c'}}>Patient Enrollment Link:</span>
+          <a href={enrollUrl} target="_blank" style={{fontSize:13,color:'#0d9488',textDecoration:'none',
+            background:'#f0fdfa',border:'1px solid #bfdbfe',borderRadius:6,padding:'4px 10px'}}>
             {enrollUrl}
           </a>
           <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>{navigator.clipboard.writeText(enrollUrl);toast('Link copied');}}>Copy</button>
@@ -4632,7 +4690,7 @@ function EnrollmentManager({token}){
               ))}
             </select>
             <button className="btn btn-outline" onClick={loadApplications}>↻ Refresh</button>
-            <span style={{marginLeft:'auto',fontSize:13,color:'#64748b'}}>{applications.length} application{applications.length!==1?'s':''}</span>
+            <span style={{marginLeft:'auto',fontSize:13,color:'#78716c'}}>{applications.length} application{applications.length!==1?'s':''}</span>
           </div>
 
           {selected&&(
@@ -4641,7 +4699,7 @@ function EnrollmentManager({token}){
                 <div style={{padding:'24px 28px'}}>
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
                     <h2 style={{fontWeight:700,fontSize:17}}>Enrollment — {selected.first_name} {selected.last_name}</h2>
-                    <button onClick={()=>setSelected(null)} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#94a3b8'}}>✕</button>
+                    <button onClick={()=>setSelected(null)} style={{background:'none',border:'none',fontSize:20,cursor:'pointer',color:'#a8a29e'}}>✕</button>
                   </div>
 
                   <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12,fontSize:13}}>
@@ -4650,12 +4708,12 @@ function EnrollmentManager({token}){
                       ['Emergency',`${selected.emergency_name} (${selected.emergency_relation}) ${selected.emergency_phone}`],
                       ['Payment',selected.payment_provider||'—'],['Status',selected.status],
                     ].map(([k,v])=>(
-                      <div key={k}><span style={{color:'#64748b',fontWeight:500}}>{k}: </span>{v||'—'}</div>
+                      <div key={k}><span style={{color:'#78716c',fontWeight:500}}>{k}: </span>{v||'—'}</div>
                     ))}
                   </div>
 
                   {(selected.conditions?.length>0||selected.medications?.length>0||selected.allergies?.length>0)&&(
-                    <div style={{background:'#f8fafc',borderRadius:8,padding:'10px 14px',marginBottom:12,fontSize:13}}>
+                    <div style={{background:'#fafaf9',borderRadius:8,padding:'10px 14px',marginBottom:12,fontSize:13}}>
                       {selected.conditions?.length>0&&<div><b>Conditions:</b> {Array.isArray(selected.conditions)?selected.conditions.join(', '):selected.conditions}</div>}
                       {selected.medications?.length>0&&<div><b>Medications:</b> {Array.isArray(selected.medications)?selected.medications.join(', '):selected.medications}</div>}
                       {selected.allergies?.length>0&&<div><b>Allergies:</b> {Array.isArray(selected.allergies)?selected.allergies.join(', '):selected.allergies}</div>}
@@ -4679,7 +4737,7 @@ function EnrollmentManager({token}){
                       <button className="btn btn-outline" style={{color:'#dc2626',borderColor:'#dc2626'}} onClick={()=>reject(selected.id)}>✗ Reject</button>
                     </div>
                   ):(
-                    <div style={{padding:'8px 12px',background:'#f1f5f9',borderRadius:8,fontSize:13,color:'#64748b'}}>
+                    <div style={{padding:'8px 12px',background:'#f5f5f4',borderRadius:8,fontSize:13,color:'#78716c'}}>
                       Status: {selected.status} · Reviewed: {selected.reviewed_at?.slice(0,10)||'—'}
                     </div>
                   )}
@@ -4689,7 +4747,7 @@ function EnrollmentManager({token}){
           )}
 
           {loading?<div style={{textAlign:'center',padding:40}}><Spinner/></div>:
-            applications.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:40}}>No enrollment applications yet.<br/>Share your enrollment link with patients to get started.</div>:
+            applications.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:40}}>No enrollment applications yet.<br/>Share your enrollment link with patients to get started.</div>:
             applications.map(a=>{
               const sb=STATUS_BADGE[a.status]||STATUS_BADGE.pending;
               return(
@@ -4698,14 +4756,14 @@ function EnrollmentManager({token}){
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                     <div>
                       <div style={{fontWeight:600,fontSize:15}}>{a.first_name} {a.last_name}</div>
-                      <div style={{fontSize:13,color:'#64748b'}}>
+                      <div style={{fontSize:13,color:'#78716c'}}>
                         {a.plan_name} · {a.email} · {a.phone}
-                        <span style={{marginLeft:8,color:'#94a3b8'}}>{a.created_at?.slice(0,10)}</span>
+                        <span style={{marginLeft:8,color:'#a8a29e'}}>{a.created_at?.slice(0,10)}</span>
                       </div>
                     </div>
                     <div style={{display:'flex',gap:8,alignItems:'center'}}>
                       <span style={{fontSize:12,fontWeight:600,padding:'3px 10px',borderRadius:20,background:sb.bg,color:sb.color}}>{sb.label}</span>
-                      {a.payment_provider&&<span style={{fontSize:11,color:'#94a3b8'}}>{a.payment_provider}</span>}
+                      {a.payment_provider&&<span style={{fontSize:11,color:'#a8a29e'}}>{a.payment_provider}</span>}
                     </div>
                   </div>
                 </div>
@@ -4718,11 +4776,11 @@ function EnrollmentManager({token}){
       {/* ── Plans tab ── */}
       {tab==='plans'&&(
         <div>
-          <div style={{marginBottom:12,fontSize:13,color:'#64748b'}}>
+          <div style={{marginBottom:12,fontSize:13,color:'#78716c'}}>
             Set monthly prices and features for each membership tier. These display on the public enrollment page.
           </div>
           {plans.map(plan=>(
-            <div key={plan.id} className="card" style={{marginBottom:12,borderLeft:`4px solid ${plan.color||'#1e3a5f'}`}}>
+            <div key={plan.id} className="card" style={{marginBottom:12,borderLeft:`4px solid ${plan.color||'var(--sidebar)'}`}}>
               {editPlan?.id===plan.id?(
                 <PlanEditor plan={editPlan} onChange={setEditPlan} onSave={()=>savePlan(editPlan)} onCancel={()=>setEditPlan(null)}/>
               ):(
@@ -4731,18 +4789,18 @@ function EnrollmentManager({token}){
                     <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
                       <span style={{fontWeight:700,fontSize:16}}>{plan.name}</span>
                       {plan.badge&&<span style={{fontSize:11,padding:'2px 8px',borderRadius:10,background:plan.color+'22',color:plan.color,fontWeight:600}}>{plan.badge}</span>}
-                      {!plan.is_active&&<span style={{fontSize:11,color:'#94a3b8'}}>Inactive</span>}
+                      {!plan.is_active&&<span style={{fontSize:11,color:'#a8a29e'}}>Inactive</span>}
                     </div>
-                    <div style={{fontSize:13,color:'#64748b',marginBottom:4}}>{plan.description}</div>
-                    <div style={{fontSize:15,fontWeight:700,color:plan.color||'#1e3a5f',marginBottom:6}}>
+                    <div style={{fontSize:13,color:'#78716c',marginBottom:4}}>{plan.description}</div>
+                    <div style={{fontSize:15,fontWeight:700,color:plan.color||'var(--sidebar)',marginBottom:6}}>
                       {plan.price_monthly>0?`$${plan.price_monthly}/month`:'Price not set'}
-                      {plan.enrollment_fee>0&&<span style={{fontSize:12,fontWeight:400,color:'#64748b',marginLeft:8}}> + ${plan.enrollment_fee} enrollment fee</span>}
+                      {plan.enrollment_fee>0&&<span style={{fontSize:12,fontWeight:400,color:'#78716c',marginLeft:8}}> + ${plan.enrollment_fee} enrollment fee</span>}
                     </div>
                     <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
                       {(plan.features||[]).slice(0,4).map((f,i)=>(
-                        <span key={i} style={{fontSize:11,color:'#475569',background:'#f1f5f9',padding:'2px 8px',borderRadius:6}}>✓ {f}</span>
+                        <span key={i} style={{fontSize:11,color:'#57534e',background:'#f5f5f4',padding:'2px 8px',borderRadius:6}}>✓ {f}</span>
                       ))}
-                      {(plan.features||[]).length>4&&<span style={{fontSize:11,color:'#94a3b8'}}>+{(plan.features||[]).length-4} more</span>}
+                      {(plan.features||[]).length>4&&<span style={{fontSize:11,color:'#a8a29e'}}>+{(plan.features||[]).length-4} more</span>}
                     </div>
                   </div>
                   <button className="btn btn-outline" style={{fontSize:12}} onClick={()=>setEditPlan({...plan})}>Edit</button>
@@ -4793,8 +4851,8 @@ function BillingUpcoming({token}){
           <option value={30}>Next 30 days</option>
         </select>
       </div>
-      {loading?<div style={{color:'#94a3b8',padding:20}}>Loading…</div>:
-      rows.length===0?<div className="card" style={{textAlign:'center',color:'#94a3b8',padding:30}}>No billing due in this window</div>:
+      {loading?<div style={{color:'#a8a29e',padding:20}}>Loading…</div>:
+      rows.length===0?<div className="card" style={{textAlign:'center',color:'#a8a29e',padding:30}}>No billing due in this window</div>:
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:14}}>
         <thead><tr style={{borderBottom:'2px solid #e2e8f0',textAlign:'left'}}>
           <th style={{padding:'6px 10px'}}>Patient</th>
@@ -5000,14 +5058,14 @@ function App(){
       {sidebarOpen&&<div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.4)',zIndex:499}} onClick={()=>setSidebarOpen(false)}/>}
 
       {/* Sidebar */}
-      <div className={`sidebar${sidebarOpen?' open':''}`} style={{width:240,background:'#0f2744',display:'flex',flexDirection:'column',padding:'16px 12px',flexShrink:0,position:'sticky',top:0,height:'100vh',overflowY:'auto'}}>
+      <div className={`sidebar${sidebarOpen?' open':''}`} style={{width:240,background:'var(--sidebar)',display:'flex',flexDirection:'column',padding:'16px 12px',flexShrink:0,position:'sticky',top:0,height:'100vh',overflowY:'auto'}}>
         <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 4px',marginBottom:24}}>
-          <div style={{width:36,height:36,background:'#2563eb',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{width:36,height:36,background:'var(--accent)',borderRadius:10,display:'flex',alignItems:'center',justifyContent:'center'}}>
             <Icon name="shield" size={20}/>
           </div>
           <div>
             <div style={{color:'#fff',fontWeight:700,fontSize:16}}>MedFlow</div>
-            <div style={{color:'#64748b',fontSize:11}}>EMR v1.0</div>
+            <div style={{color:'var(--text-4)',fontSize:11}}>EMR v1.0</div>
           </div>
         </div>
         {NAV.map(n=>(
@@ -5015,10 +5073,10 @@ function App(){
             <Icon name={n.icon} size={16}/>{n.label}
           </div>
         ))}
-        <div style={{marginTop:'auto',paddingTop:16,borderTop:'1px solid #1e3a5f'}}>
-          <div style={{padding:'8px 12px',color:'#64748b',fontSize:12}}>
-            <div style={{color:'#94a3b8',fontWeight:500}}>{user.full_name}</div>
-            <div>{user.specialty||user.role}</div>
+        <div style={{marginTop:'auto',paddingTop:16,borderTop:'1px solid var(--sidebar-b)'}}>
+          <div style={{padding:'8px 12px',color:'var(--text-4)',fontSize:12}}>
+            <div style={{color:'#d6d3d1',fontWeight:600,fontSize:13}}>{user.full_name}</div>
+            <div style={{color:'var(--text-4)',marginTop:2}}>{user.specialty||user.role}</div>
           </div>
           <div className="sidebar-item" onClick={logout}><Icon name="logout" size={16}/>Sign Out</div>
         </div>
@@ -5027,7 +5085,7 @@ function App(){
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:'auto'}}>
         {/* Mobile header */}
-        <div style={{display:'none',background:'#0f2744',padding:'12px 16px',alignItems:'center',gap:12,position:'sticky',top:0,zIndex:10}} id="mobile-header">
+        <div style={{display:'none',background:'var(--sidebar)',padding:'12px 16px',alignItems:'center',gap:12,position:'sticky',top:0,zIndex:10}} id="mobile-header">
           <button onClick={()=>setSidebarOpen(true)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer',padding:4}}>
             <Icon name="menu" size={22}/>
           </button>
@@ -5060,13 +5118,13 @@ function NotesBrowser({token,user}){
 
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Clinical Notes</h1>
-      <p style={{color:'#64748b',marginBottom:20,fontSize:14}}>To create a note, open a patient chart and click "New Note".</p>
-      {loading?<Spinner/>:notes.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No notes yet</div>:notes.map(n=>(
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:16}}>Clinical Notes</h1>
+      <p style={{color:'#78716c',marginBottom:20,fontSize:14}}>To create a note, open a patient chart and click "New Note".</p>
+      {loading?<Spinner/>:notes.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#a8a29e'}}>No notes yet</div>:notes.map(n=>(
         <div key={n.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
           <div>
             <div style={{fontWeight:600}}>{n.note_type} — {n.visit_date?.slice(0,10)}</div>
-            <div style={{fontSize:13,color:'#64748b'}}>{n.chief_complaint?.slice(0,80)}</div>
+            <div style={{fontSize:13,color:'#78716c'}}>{n.chief_complaint?.slice(0,80)}</div>
             <div style={{display:'flex',gap:4,marginTop:4,flexWrap:'wrap'}}>
               <span className={`badge ${n.status==='signed'?'badge-green':'badge-gray'}`}>{n.status}</span>
               {n.ai_generated&&<span className="badge badge-yellow">AI</span>}
@@ -5086,11 +5144,11 @@ function LabsBrowser({token}){
   const transmit=async id=>{const r=await api('POST',`/api/lab-orders/${id}/transmit`,{},token).catch(e=>{toast(e.message,'error');return null;});if(r){toast('Transmitted');setLabs(labs.map(l=>l.id===id?{...l,status:'transmitted'}:l));}};
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Lab Orders</h1>
-      {labs.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No lab orders</div>:labs.map(l=>(
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:16}}>Lab Orders</h1>
+      {labs.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#a8a29e'}}>No lab orders</div>:labs.map(l=>(
         <div key={l.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
           <div><div style={{fontWeight:600}}>{JSON.parse(l.tests||'[]').join(', ')}</div>
-            <div style={{fontSize:13,color:'#64748b'}}>{l.facility} · {l.clinical_indication} · {l.created_at?.slice(0,10)}</div>
+            <div style={{fontSize:13,color:'#78716c'}}>{l.facility} · {l.clinical_indication} · {l.created_at?.slice(0,10)}</div>
             <span className={`badge ${l.priority==='stat'?'badge-red':'badge-gray'}`}>{l.priority}</span>
           </div>
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
@@ -5110,11 +5168,11 @@ function ImagingBrowser({token}){
   const faxOrder=async id=>{const r=await api('POST',`/api/imaging-orders/${id}/fax`,{},token).catch(e=>{toast(e.message,'error');return null;});if(r){toast('Faxed');setOrders(orders.map(o=>o.id===id?{...o,fax_status:'sent'}:o));}};
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Imaging Orders</h1>
-      {orders.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No imaging orders</div>:orders.map(o=>(
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:16}}>Imaging Orders</h1>
+      {orders.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#a8a29e'}}>No imaging orders</div>:orders.map(o=>(
         <div key={o.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
           <div><div style={{fontWeight:600}}>{o.study_type} — {o.body_part}</div>
-            <div style={{fontSize:13,color:'#64748b'}}>{o.facility} · Fax: {o.fax_number} · {o.created_at?.slice(0,10)}</div>
+            <div style={{fontSize:13,color:'#78716c'}}>{o.facility} · Fax: {o.fax_number} · {o.created_at?.slice(0,10)}</div>
           </div>
           <div style={{display:'flex',gap:8,alignItems:'center'}}>
             <span className={`badge ${o.fax_status==='sent'?'badge-green':'badge-yellow'}`}>{o.fax_status}</span>
@@ -5132,15 +5190,15 @@ function MembershipsBrowser({token}){
   const total=memberships.filter(m=>m.status==='active').reduce((s,m)=>s+m.price_monthly,0);
   return(
     <div>
-      <h1 style={{fontSize:24,fontWeight:700,color:'#1e293b',marginBottom:16}}>Memberships</h1>
+      <h1 style={{fontSize:24,fontWeight:700,color:'#1c1917',marginBottom:16}}>Memberships</h1>
       <div className="card" style={{marginBottom:16,display:'flex',gap:24}}>
-        <div><div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>${total.toFixed(0)}</div><div style={{fontSize:13,color:'#64748b'}}>Monthly Recurring Revenue</div></div>
-        <div><div style={{fontSize:28,fontWeight:800,color:'#2563eb'}}>{memberships.filter(m=>m.status==='active').length}</div><div style={{fontSize:13,color:'#64748b'}}>Active Members</div></div>
+        <div><div style={{fontSize:28,fontWeight:800,color:'#16a34a'}}>${total.toFixed(0)}</div><div style={{fontSize:13,color:'#78716c'}}>Monthly Recurring Revenue</div></div>
+        <div><div style={{fontSize:28,fontWeight:800,color:'#0d9488'}}>{memberships.filter(m=>m.status==='active').length}</div><div style={{fontSize:13,color:'#78716c'}}>Active Members</div></div>
       </div>
-      {memberships.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#94a3b8'}}>No memberships</div>:memberships.map(m=>(
+      {memberships.length===0?<div className="card" style={{textAlign:'center',padding:40,color:'#a8a29e'}}>No memberships</div>:memberships.map(m=>(
         <div key={m.id} className="card" style={{marginBottom:10,display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:8}}>
           <div><div style={{fontWeight:600}}>{m.plan_name} — ${m.price_monthly}/mo</div>
-            <div style={{fontSize:13,color:'#64748b'}}>Started {m.start_date?.slice(0,10)}</div>
+            <div style={{fontSize:13,color:'#78716c'}}>Started {m.start_date?.slice(0,10)}</div>
           </div>
           <span className={`badge ${m.status==='active'?'badge-green':'badge-gray'}`}>{m.status}</span>
         </div>
