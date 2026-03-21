@@ -939,22 +939,51 @@ function PatientChart({token,patient,onBack,user}){
           <p style={{fontSize:12.5,color:'var(--text-3)',margin:0}}>DOB: {patient.dob} · {patient.phone} · {patient.insurance_name||'No insurance'}</p>
         </div>
         {(user.role==='admin'||user.role==='physician')&&(
-          <button className="btn btn-outline" title="Export complete patient records (HIPAA Right of Access)" onClick={()=>{
-            fetch(`/api/patients/${patient.id}/export`,{headers:{Authorization:`Bearer ${token}`}})
-              .then(r=>{
-                const cd=r.headers.get('Content-Disposition')||'';
-                const fname=cd.match(/filename="([^"]+)"/)?.[1]||`patient_${patient.id}_records.json`;
-                return r.blob().then(b=>({b,fname}));
-              })
-              .then(({b,fname})=>{
-                const url=URL.createObjectURL(b);
-                const a=document.createElement('a');
-                a.href=url; a.download=fname; a.click();
-                URL.revokeObjectURL(url);
-              });
-          }} style={{whiteSpace:'nowrap'}}>
-            ⬇ Export Records
-          </button>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            {/* PDF export — primary CTA */}
+            {(()=>{
+              const [exporting,setExporting]=React.useState(false);
+              const exportPdf=async()=>{
+                setExporting(true);
+                try{
+                  const r=await fetch(`/api/patients/${patient.id}/export-pdf`,{headers:{Authorization:`Bearer ${token}`}});
+                  if(!r.ok) throw new Error(await r.text());
+                  const cd=r.headers.get('Content-Disposition')||'';
+                  const fname=cd.match(/filename="([^"]+)"/)?.[1]||`${patient.last_name}_HealthRecord.pdf`;
+                  const b=await r.blob();
+                  const url=URL.createObjectURL(b);
+                  const a=document.createElement('a');
+                  a.href=url; a.download=fname; a.click();
+                  URL.revokeObjectURL(url);
+                }catch(e){alert('Export failed: '+e.message);}
+                setExporting(false);
+              };
+              return(
+                <button className="btn btn-primary" onClick={exportPdf} disabled={exporting}
+                  title="Download complete health record as PDF (HIPAA Right of Access)"
+                  style={{whiteSpace:'nowrap'}}>
+                  {exporting?'Generating…':'⬇ Export as PDF'}
+                </button>
+              );
+            })()}
+            {/* Raw JSON export */}
+            <button className="btn btn-outline" title="Export raw data as JSON" onClick={()=>{
+              fetch(`/api/patients/${patient.id}/export`,{headers:{Authorization:`Bearer ${token}`}})
+                .then(r=>{
+                  const cd=r.headers.get('Content-Disposition')||'';
+                  const fname=cd.match(/filename="([^"]+)"/)?.[1]||`patient_${patient.id}_records.json`;
+                  return r.blob().then(b=>({b,fname}));
+                })
+                .then(({b,fname})=>{
+                  const url=URL.createObjectURL(b);
+                  const a=document.createElement('a');
+                  a.href=url; a.download=fname; a.click();
+                  URL.revokeObjectURL(url);
+                });
+            }} style={{whiteSpace:'nowrap'}}>
+              ⬇ JSON
+            </button>
+          </div>
         )}
       </div>
 

@@ -40,6 +40,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import (
+    HRFlowable, KeepTogether, PageBreak,
     Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 )
 from sqlalchemy.orm import Session
@@ -5442,6 +5443,381 @@ def export_patient_records(
           details="HIPAA Right of Access export")
     return JSONResponse(
         content=data,
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ── Patient Record PDF Export ─────────────────────────────────────────────────
+def _build_record_pdf(data: dict) -> bytes:
+    """
+    Render a complete patient health record as a formatted PDF.
+    Uses ReportLab Platypus for multi-page layout with headers/footers.
+    """
+    buf = BytesIO()
+
+    # ── Colours & constants ───────────────────────────────────────────────────
+    TEAL       = colors.HexColor("#0d9488")
+    TEAL_LIGHT = colors.HexColor("#e6f7f6")
+    DARK       = colors.HexColor("#292524")
+    GREY       = colors.HexColor("#78716c")
+    RULE       = colors.HexColor("#d6d3d1")
+    WHITE      = colors.white
+
+    p = data.get("patient", {})
+    pt_name = f"{p.get('first_name','')} {p.get('last_name','')}".strip() or "Unknown"
+    generated = data.get("export_generated_at", "")[:10]
+
+    # ── Page template with running header/footer ──────────────────────────────
+    def _on_page(canvas, doc):
+        canvas.saveState()
+        w, h = letter
+        # Header bar
+        canvas.setFillColor(DARK)
+        canvas.rect(0, h - 36, w, 36, fill=1, stroke=0)
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.setFillColor(WHITE)
+        canvas.drawString(18, h - 23, "MedFlow EMR — CONFIDENTIAL HEALTH RECORD")
+        canvas.drawRightString(w - 18, h - 23, pt_name)
+        # Footer
+        canvas.setFillColor(GREY)
+        canvas.setFont("Helvetica", 8)
+        canvas.drawString(18, 16, f"Generated {generated}  |  HIPAA Right of Access — 45 C.F.R. § 164.524")
+        canvas.drawRightString(w - 18, 16, f"Page {doc.page}")
+        canvas.restoreState()
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=letter,
+        leftMargin=46, rightMargin=46, topMargin=54, bottomMargin=36,
+        onFirstPage=_on_page, onLaterPages=_on_page,
+    )
+    styles = getSampleStyleSheet()
+
+    # ── Custom paragraph styles ───────────────────────────────────────────────
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+
+    s_title   = ParagraphStyle("s_title",   parent=styles["Title"],
+                                textColor=DARK, fontSize=22, spaceAfter=4)
+    s_sub     = ParagraphStyle("s_sub",     parent=styles["Normal"],
+                                textColor=GREY, fontSize=10, spaceAfter=2)
+    s_h1      = ParagraphStyle("s_h1",      parent=styles["Heading1"],
+                                textColor=TEAL, fontSize=13, spaceBefore=14, spaceAfter=4)
+    s_h2      = ParagraphStyle("s_h2",      parent=styles["Heading2"],
+                                textColor=DARK, fontSize=11, spaceBefore=8, spaceAfter=2)
+    s_body    = ParagraphStyle("s_body",    parent=styles["Normal"],
+                                fontSize=9, leading=13, spaceAfter=3)
+    s_label   = ParagraphStyle("s_label",   parent=styles["Normal"],
+                                fontSize=8, textColor=GREY, leading=11)
+    s_notice  = ParagraphStyle("s_notice",  parent=styles["Normal"],
+                                fontSize=8, textColor=GREY, leading=12,
+                                borderPad=6, backColor=TEAL_LIGHT, borderRadius=4)
+    s_empty   = ParagraphStyle("s_empty",   parent=styles["Normal"],
+                                fontSize=9, textColor=GREY, alignment=TA_CENTER)
+
+    W = letter[0] - 92  # usable width
+
+    def rule():
+        return HRFlowable(width="100%", thickness=0.5, color=RULE, spaceAfter=6, spaceBefore=2)
+
+    def section(title):
+        return [Spacer(1, 6), Paragraph(title, s_h1), rule()]
+
+    def kv_table(rows, col_w=None):
+        """Two-column label/value table."""
+        if not rows:
+            return []
+        cw = col_w or [110, W - 110]
+        t = Table([[Paragraph(f"<b>{k}</b>", s_label), Paragraph(str(v or "—"), s_body)]
+                   for k, v in rows], colWidths=cw)
+        t.setStyle(TableStyle([
+            ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING",   (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+            ("ROWBACKGROUNDS",(0, 0),(-1,-1), [colors.white, TEAL_LIGHT]),
+        ]))
+        return [t, Spacer(1, 6)]
+
+    story = []
+
+    # ── Cover / title block ───────────────────────────────────────────────────
+    story.append(Spacer(1, 24))
+    story.append(Paragraph("Patient Health Record", s_title))
+    story.append(Paragraph(pt_name, ParagraphStyle("big", parent=styles["Normal"],
+                                                    fontSize=16, textColor=TEAL, spaceAfter=6)))
+    dob = p.get("dob", "")
+    story.append(Paragraph(f"Date of Birth: {dob}  |  Record generated: {generated}", s_sub))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(data.get("hipaa_notice", ""), s_notice))
+    story.append(Spacer(1, 20))
+    story.append(rule())
+
+    # ── 1. Demographics & Insurance ──────────────────────────────────────────
+    story += section("1. Demographics & Insurance")
+    demo_rows = [
+        ("First Name",        p.get("first_name")),
+        ("Last Name",         p.get("last_name")),
+        ("Date of Birth",     p.get("dob")),
+        ("Gender",            p.get("gender")),
+        ("Phone",             p.get("phone")),
+        ("Email",             p.get("email")),
+        ("Address",           ", ".join(filter(None, [
+                                  p.get("address"), p.get("city"),
+                                  p.get("state"), p.get("zip_code")]))),
+        ("Emergency Contact", p.get("emergency_contact")),
+        ("Emergency Phone",   p.get("emergency_phone")),
+        ("Insurance",         p.get("insurance_name")),
+        ("Member ID",         p.get("insurance_id")),
+        ("Group #",           p.get("insurance_group")),
+    ]
+    story += kv_table(demo_rows)
+
+    # ── 2. Medical History ────────────────────────────────────────────────────
+    history = data.get("medical_history", [])
+    story += section("2. Medical History")
+    if history:
+        by_type: dict = {}
+        for e in history:
+            t = (e.get("entry_type") or "Other").replace("_", " ").title()
+            by_type.setdefault(t, []).append(e)
+        for etype, entries in sorted(by_type.items()):
+            story.append(Paragraph(etype, s_h2))
+            rows = [[Paragraph("<b>Description</b>", s_label),
+                     Paragraph("<b>Notes</b>", s_label)]]
+            for e in entries:
+                rows.append([Paragraph(e.get("description") or "—", s_body),
+                              Paragraph(e.get("notes") or "—", s_body)])
+            t = Table(rows, colWidths=[W * 0.55, W * 0.45])
+            t.setStyle(TableStyle([
+                ("BACKGROUND",   (0, 0), (-1, 0), TEAL),
+                ("TEXTCOLOR",    (0, 0), (-1, 0), WHITE),
+                ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, TEAL_LIGHT]),
+                ("GRID",         (0, 0), (-1, -1), 0.3, RULE),
+                ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING",   (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 6))
+    else:
+        story.append(Paragraph("No medical history recorded.", s_empty))
+
+    # ── 3. Current Medications ────────────────────────────────────────────────
+    meds = data.get("medications", [])
+    story += section("3. Current Medications")
+    if meds:
+        rows = [[Paragraph(h, s_label) for h in
+                 ["<b>Medication</b>", "<b>Dose</b>", "<b>Frequency</b>", "<b>Status</b>"]]]
+        for m in meds:
+            rows.append([
+                Paragraph(m.get("medication_name") or "—", s_body),
+                Paragraph(m.get("dose") or "—", s_body),
+                Paragraph(m.get("frequency") or "—", s_body),
+                Paragraph("Active" if m.get("is_active") else "Inactive", s_body),
+            ])
+        t = Table(rows, colWidths=[W * 0.40, W * 0.20, W * 0.25, W * 0.15])
+        t.setStyle(TableStyle([
+            ("BACKGROUND",   (0, 0), (-1, 0), TEAL),
+            ("TEXTCOLOR",    (0, 0), (-1, 0), WHITE),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, TEAL_LIGHT]),
+            ("GRID",         (0, 0), (-1, -1), 0.3, RULE),
+            ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING",   (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 6))
+    else:
+        story.append(Paragraph("No medications on record.", s_empty))
+
+    # ── 4. Clinical Notes ─────────────────────────────────────────────────────
+    notes = data.get("clinical_notes", [])
+    story += section("4. Clinical Notes")
+    if notes:
+        for note in notes:
+            vdate = str(note.get("visit_date") or "")[:10]
+            cc = note.get("chief_complaint") or ""
+            block = [
+                Paragraph(f"<b>{vdate}</b> — {cc}", s_h2),
+            ]
+            for field, label in [
+                ("hpi",           "History of Present Illness"),
+                ("assessment",    "Assessment"),
+                ("plan",          "Plan"),
+                ("pmh",           "Past Medical History"),
+                ("medications",   "Medications (note)"),
+                ("allergies",     "Allergies"),
+            ]:
+                val = note.get(field, "")
+                if val and val.strip():
+                    block.append(Paragraph(f"<b>{label}:</b> {val.replace(chr(10), ' ')}", s_body))
+            # ICD / CPT codes
+            try:
+                icd = json.loads(note.get("icd10_codes") or "[]")
+                cpt = json.loads(note.get("cpt_codes") or "[]")
+                if icd:
+                    block.append(Paragraph(f"<b>ICD-10:</b> {', '.join(icd)}", s_label))
+                if cpt:
+                    block.append(Paragraph(f"<b>CPT:</b> {', '.join(cpt)}", s_label))
+            except Exception:
+                pass
+            status = note.get("status", "")
+            if status:
+                block.append(Paragraph(f"<b>Status:</b> {status.title()}", s_label))
+            block.append(Spacer(1, 4))
+            block.append(HRFlowable(width="100%", thickness=0.3, color=RULE))
+            story.append(KeepTogether(block))
+    else:
+        story.append(Paragraph("No clinical notes on record.", s_empty))
+
+    # ── 5. Lab Orders ─────────────────────────────────────────────────────────
+    labs = data.get("lab_orders", [])
+    story += section("5. Lab Orders")
+    if labs:
+        for lab in labs:
+            ldate = str(lab.get("created_at") or "")[:10]
+            tests = lab.get("test_names") or lab.get("tests") or ""
+            block = [Paragraph(f"<b>{ldate}</b> — {tests}", s_h2)]
+            rows = [("Ordering Physician", lab.get("ordering_physician_name")),
+                    ("Status",             lab.get("status")),
+                    ("Clinical Indication",lab.get("clinical_indication")),
+                    ("Notes",              lab.get("notes"))]
+            block += kv_table([(k, v) for k, v in rows if v])
+            obs = lab.get("observations", [])
+            if obs:
+                block.append(Paragraph("<b>Results:</b>", s_label))
+                obs_rows = [[Paragraph(h, s_label) for h in
+                             ["<b>Test</b>", "<b>Value</b>", "<b>Units</b>", "<b>Range</b>", "<b>Flag</b>"]]]
+                for o in obs:
+                    obs_rows.append([
+                        Paragraph(o.get("display_name") or o.get("test_name") or "—", s_body),
+                        Paragraph(str(o.get("value") or "—"), s_body),
+                        Paragraph(o.get("units") or "—", s_body),
+                        Paragraph(o.get("reference_range") or "—", s_body),
+                        Paragraph(o.get("abnormal_flag") or "—", s_body),
+                    ])
+                ot = Table(obs_rows, colWidths=[W*0.30, W*0.15, W*0.15, W*0.25, W*0.15])
+                ot.setStyle(TableStyle([
+                    ("BACKGROUND",   (0, 0), (-1, 0), TEAL),
+                    ("TEXTCOLOR",    (0, 0), (-1, 0), WHITE),
+                    ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, TEAL_LIGHT]),
+                    ("GRID",         (0, 0), (-1, -1), 0.3, RULE),
+                    ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+                    ("TOPPADDING",   (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+                ]))
+                block.append(ot)
+            block.append(Spacer(1, 4))
+            block.append(HRFlowable(width="100%", thickness=0.3, color=RULE))
+            story.append(KeepTogether(block[:6]))  # keep header + meta together
+            story += block[6:]
+
+    else:
+        story.append(Paragraph("No lab orders on record.", s_empty))
+
+    # ── 6. Imaging Orders ────────────────────────────────────────────────────
+    imaging = data.get("imaging_orders", [])
+    story += section("6. Imaging Orders")
+    if imaging:
+        rows_hdr = [[Paragraph(h, s_label) for h in
+                     ["<b>Date</b>", "<b>Modality</b>", "<b>Body Part</b>",
+                      "<b>Indication</b>", "<b>Status</b>"]]]
+        for img in imaging:
+            rows_hdr.append([
+                Paragraph(str(img.get("created_at") or "")[:10], s_body),
+                Paragraph(img.get("modality") or "—", s_body),
+                Paragraph(img.get("body_part") or "—", s_body),
+                Paragraph(img.get("clinical_indication") or "—", s_body),
+                Paragraph(img.get("status") or "—", s_body),
+            ])
+        it = Table(rows_hdr, colWidths=[W*0.12, W*0.13, W*0.18, W*0.42, W*0.15])
+        it.setStyle(TableStyle([
+            ("BACKGROUND",   (0, 0), (-1, 0), TEAL),
+            ("TEXTCOLOR",    (0, 0), (-1, 0), WHITE),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, TEAL_LIGHT]),
+            ("GRID",         (0, 0), (-1, -1), 0.3, RULE),
+            ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING",   (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ]))
+        story.append(it)
+    else:
+        story.append(Paragraph("No imaging orders on record.", s_empty))
+
+    # ── 7. Prescriptions ─────────────────────────────────────────────────────
+    rxs = data.get("prescriptions", [])
+    story += section("7. Prescriptions")
+    if rxs:
+        rows_hdr = [[Paragraph(h, s_label) for h in
+                     ["<b>Date</b>", "<b>Drug</b>", "<b>Sig</b>",
+                      "<b>Quantity</b>", "<b>Refills</b>", "<b>Status</b>"]]]
+        for rx in rxs:
+            rows_hdr.append([
+                Paragraph(str(rx.get("created_at") or "")[:10], s_body),
+                Paragraph(rx.get("drug_name") or "—", s_body),
+                Paragraph(rx.get("sig") or "—", s_body),
+                Paragraph(str(rx.get("quantity") or "—"), s_body),
+                Paragraph(str(rx.get("refills") or "0"), s_body),
+                Paragraph(rx.get("status") or "—", s_body),
+            ])
+        rt = Table(rows_hdr, colWidths=[W*0.10, W*0.22, W*0.35, W*0.11, W*0.10, W*0.12])
+        rt.setStyle(TableStyle([
+            ("BACKGROUND",   (0, 0), (-1, 0), TEAL),
+            ("TEXTCOLOR",    (0, 0), (-1, 0), WHITE),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, TEAL_LIGHT]),
+            ("GRID",         (0, 0), (-1, -1), 0.3, RULE),
+            ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING",   (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ]))
+        story.append(rt)
+    else:
+        story.append(Paragraph("No prescriptions on record.", s_empty))
+
+    # ── 8. Memberships ───────────────────────────────────────────────────────
+    memberships = data.get("memberships", [])
+    story += section("8. Memberships")
+    if memberships:
+        for m in memberships:
+            story += kv_table([
+                ("Plan",        m.get("plan_name")),
+                ("Status",      m.get("status")),
+                ("Start Date",  str(m.get("start_date") or "")[:10]),
+                ("Next Billing",str(m.get("next_billing_date") or "")[:10]),
+            ])
+    else:
+        story.append(Paragraph("No memberships on record.", s_empty))
+
+    # ── Build ─────────────────────────────────────────────────────────────────
+    doc.build(story, onFirstPage=_on_page, onLaterPages=_on_page)
+    return buf.getvalue()
+
+
+@app.get("/api/patients/{patient_id}/export-pdf")
+def export_patient_pdf(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    HIPAA Right of Access — full patient record export as a formatted PDF.
+    Accessible to physician and admin only. Every export is audit-logged.
+    """
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+
+    data = _build_patient_export(patient_id, db)
+    pdf_bytes = _build_record_pdf(data)
+
+    fname = (f"{patient.last_name}_{patient.first_name}_"
+             f"HealthRecord_{datetime.utcnow().strftime('%Y%m%d')}.pdf")
+    audit(db, current_user.id, "EXPORT_PHI_PDF", "Patient", str(patient_id),
+          details=f"Full patient record PDF exported ({len(pdf_bytes)//1024} KB)")
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
