@@ -1510,13 +1510,16 @@ def update_note(
                 detail="Signed notes are immutable. Only status may be changed. "
                        "Create an addendum note instead of editing the signed record."
             )
-    skip = {"id", "created_at", "patient_id", "physician_id"}
+    # HIPAA: explicit allowlist prevents mass-assignment of internal note fields
+    _NOTE_EDITABLE = {
+        "chief_complaint", "hpi", "pmh", "medications", "allergies",
+        "ros", "physical_exam", "assessment", "plan",
+        "note_type", "ai_generated", "status", "visit_date", "notes",
+    }
     for k, v in data.items():
-        if k in skip:
-            continue
         if k in ("icd10_codes", "cpt_codes"):
             setattr(note, k, json.dumps(v))
-        elif hasattr(note, k):
+        elif k in _NOTE_EDITABLE:
             setattr(note, k, v)
     note.updated_at = datetime.utcnow()
     db.commit()
@@ -1685,12 +1688,12 @@ async def ai_generate(
     patient_ctx = ""
     if patient_id:
         p = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-        if p:
-            _require_patient_access(p, current_user)
-            patient_ctx = (
-                f"Patient: {p.first_name} {p.last_name}, DOB: {p.dob}, "
-                f"Gender: {p.gender}, Insurance: {p.insurance_name}"
-            )
+        if not p: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(p, current_user)
+        patient_ctx = (
+            f"Patient: {p.first_name} {p.last_name}, DOB: {p.dob}, "
+            f"Gender: {p.gender}, Insurance: {p.insurance_name}"
+        )
 
     anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not anthropic_key:
@@ -3854,8 +3857,8 @@ def update_appointment(appt_id: int, data: dict, db: Session = Depends(get_db), 
     if not a: raise HTTPException(status_code=404, detail="Not found")
     if a.patient_id:
         _appt_patient = db.query(models.Patient).filter(models.Patient.id == a.patient_id).first()
-        if _appt_patient:
-            _require_patient_access(_appt_patient, current_user)
+        if not _appt_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_appt_patient, current_user)
     for k in ("title","status","notes","color","patient_id","provider_id","appointment_type_id"):
         if k in data: setattr(a, k, data[k])
     if "start_time" in data: a.start_time = _dt.fromisoformat(data["start_time"])
@@ -3872,8 +3875,8 @@ def cancel_appointment(appt_id: int, db: Session = Depends(get_db), current_user
     if not a: raise HTTPException(status_code=404, detail="Not found")
     if a.patient_id:
         _cancel_patient = db.query(models.Patient).filter(models.Patient.id == a.patient_id).first()
-        if _cancel_patient:
-            _require_patient_access(_cancel_patient, current_user)
+        if not _cancel_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_cancel_patient, current_user)
     a.status = "cancelled"; a.updated_at = _dt.utcnow(); db.commit()
     audit(db, current_user.id, "CANCEL_APPOINTMENT", "Appointment", str(a.id))
     return {"ok": True}
