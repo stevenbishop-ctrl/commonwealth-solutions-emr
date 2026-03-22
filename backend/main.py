@@ -3336,7 +3336,12 @@ def list_memberships(
 ):
     q = db.query(models.Membership)
     if patient_id:
+        _memb_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if not _memb_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_memb_patient, current_user)
         q = q.filter(models.Membership.patient_id == patient_id)
+    elif current_user.role == "staff":
+        raise HTTPException(status_code=400, detail="patient_id is required")
     return [clean(m) for m in q.order_by(models.Membership.created_at.desc()).all()]
 
 
@@ -3372,9 +3377,13 @@ def update_membership(
     m = db.query(models.Membership).filter(models.Membership.id == membership_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="Membership not found")
-    for k, v in data.items():
-        if hasattr(m, k) and k not in ("id", "patient_id", "created_at"):
-            setattr(m, k, v)
+    _upd_memb_patient = db.query(models.Patient).filter(models.Patient.id == m.patient_id).first()
+    if not _upd_memb_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_upd_memb_patient, current_user)
+    _MEMBERSHIP_EDITABLE = {"plan_name", "price_monthly", "start_date", "end_date", "status", "notes"}
+    for k in _MEMBERSHIP_EDITABLE:
+        if k in data:
+            setattr(m, k, data[k])
     db.commit()
     audit(db, current_user.id, "UPDATE_MEMBERSHIP", "Membership", str(membership_id))
     return clean(m)
@@ -3392,7 +3401,12 @@ def list_payments(
 ):
     q = db.query(models.Payment)
     if patient_id:
+        _pay_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if not _pay_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_pay_patient, current_user)
         q = q.filter(models.Payment.patient_id == patient_id)
+    elif current_user.role == "staff":
+        raise HTTPException(status_code=400, detail="patient_id is required")
     return [clean(p) for p in q.order_by(models.Payment.created_at.desc()).all()]
 
 
