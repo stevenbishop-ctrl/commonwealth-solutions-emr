@@ -244,7 +244,7 @@ function LoginPage({onLogin}){
       const fd=new FormData();
       fd.append('username',form.username);
       fd.append('password',form.password);
-      const r=await fetch(API+'/api/auth/login',{method:'POST',body:fd});
+      const r=await fetch(API+'/api/auth/login',{method:'POST',body:fd,credentials:'include'});
       if(!r.ok){const e=await r.json();throw new Error(e.detail);}
       const data=await r.json();
       if(data.mfa_required){
@@ -270,6 +270,7 @@ function LoginPage({onLogin}){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({reset_token:pwResetToken,current_password:pwExpiredForm.current,new_password:pwExpiredForm.newPw}),
+        credentials:'include',
       });
       if(!r.ok){const e=await r.json();throw new Error(e.detail);}
       const data=await r.json();
@@ -286,6 +287,7 @@ function LoginPage({onLogin}){
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({mfa_token:mfaToken,code:mfaCode}),
+        credentials:'include',
       });
       if(!r.ok){const e=await r.json();throw new Error(e.detail);}
       const data=await r.json();
