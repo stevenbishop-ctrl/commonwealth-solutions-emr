@@ -241,9 +241,14 @@ function LoginPage({onLogin}){
     e.preventDefault();
     setLoading(true);setErr('');
     try{
+      // Read directly from DOM to capture browser-autofilled values that
+      // bypass React's onChange and would otherwise submit as empty strings.
+      const formEl=e.target;
+      const usernameVal=formEl.querySelector('input:not([type="password"])')?.value||form.username;
+      const passwordVal=formEl.querySelector('input[type="password"]')?.value||form.password;
       const fd=new FormData();
-      fd.append('username',form.username);
-      fd.append('password',form.password);
+      fd.append('username',usernameVal);
+      fd.append('password',passwordVal);
       const r=await fetch(API+'/api/auth/login',{method:'POST',body:fd,credentials:'include'});
       if(!r.ok){const e=await r.json();throw new Error(e.detail);}
       const data=await r.json();
