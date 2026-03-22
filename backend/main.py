@@ -3174,8 +3174,13 @@ def send_fax(
         raise HTTPException(status_code=400, detail="to_number required")
     pdf_bytes = base64.b64decode(pdf_b64) if pdf_b64 else b""
     telnyx_data = _send_telnyx_fax(to_number, pdf_bytes, subject)
+    _fax_pid = data.get("patient_id")
+    if _fax_pid:
+        _fax_send_patient = db.query(models.Patient).filter(models.Patient.id == _fax_pid).first()
+        if not _fax_send_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_fax_send_patient, current_user)
     fax = models.FaxLog(
-        patient_id=data.get("patient_id"),
+        patient_id=_fax_pid,
         physician_id=current_user.id,
         direction="sent",
         from_number=TELNYX_FROM_NUMBER,
@@ -3352,6 +3357,9 @@ def create_membership(
     current_user: models.User = Depends(get_current_user),
 ):
     """Create a membership record for a patient."""
+    _new_memb_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _new_memb_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_new_memb_patient, current_user)
     start = data.get("start_date")
     m = models.Membership(
         patient_id=data["patient_id"],
@@ -3417,6 +3425,9 @@ def create_payment(
     current_user: models.User = Depends(get_current_user),
 ):
     """Record a payment for a patient."""
+    _new_pay_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _new_pay_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_new_pay_patient, current_user)
     pay = models.Payment(
         patient_id=data["patient_id"],
         amount=data.get("amount", 0.0),
