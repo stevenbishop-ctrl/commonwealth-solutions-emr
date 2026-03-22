@@ -1286,10 +1286,21 @@ def update_patient(
     if not p:
         raise HTTPException(status_code=404, detail="Patient not found")
     _require_patient_access(p, current_user)
-    skip = {"id", "created_at", "created_by"}
-    for k, v in data.items():
-        if k not in skip and hasattr(p, k):
-            setattr(p, k, v)
+    # HIPAA: explicit allowlist prevents mass-assignment of sensitive fields
+    # (portal_password_hash, portal_active, sms_consent, etc.)
+    _PATIENT_EDITABLE = {
+        "first_name", "last_name", "dob", "gender", "phone", "email",
+        "address", "city", "state", "zip_code",
+        "insurance_name", "insurance_id", "insurance_group", "insurance_plan_type",
+        "emergency_contact", "emergency_phone",
+        "primary_care_physician", "referring_physician",
+        "preferred_pharmacy", "preferred_pharmacy_fax",
+        "preferred_language", "race", "ethnicity",
+        "notes", "allergies_text",
+    }
+    for k in _PATIENT_EDITABLE:
+        if k in data:
+            setattr(p, k, data[k])
     db.commit()
     db.refresh(p)
     audit(db, current_user.id, "UPDATE_PATIENT", "Patient", str(patient_id))
@@ -1543,6 +1554,8 @@ def note_pdf(
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     patient = db.query(models.Patient).filter(models.Patient.id == note.patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     physician = db.query(models.User).filter(models.User.id == note.physician_id).first()
     # HIPAA audit: PHI export event
     audit(db, current_user.id, "EXPORT_PHI_PDF", "ClinicalNote", str(note_id),
@@ -1858,6 +1871,7 @@ def transmit_lab_order(
     provider = db.query(models.User).filter(models.User.id == order.physician_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
 
     # ── ABN gate: Medicare patients require a signed ABN before transmission ──
     is_medicare = "medicare" in (patient.insurance_name or "").lower()
@@ -1925,6 +1939,9 @@ def get_lab_result(
     order = db.query(models.LabOrder).filter(models.LabOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _lab_result_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _lab_result_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_lab_result_patient, current_user)
 
     # If already resulted and we have data, return it immediately
     if order.status == "resulted" and order.result_data:
@@ -2007,6 +2024,11 @@ def download_result_pdf(
     order = db.query(models.LabOrder).filter(models.LabOrder.id == order_id).first()
     if not order or not order.result_pdf:
         raise HTTPException(status_code=404, detail="No result PDF available")
+    _pdf_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _pdf_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_pdf_patient, current_user)
+    audit(db, current_user.id, "EXPORT_PHI_PDF", "LabOrder", str(order_id),
+          f"Lab result PDF downloaded for patient_id={order.patient_id}")
     pdf_bytes = base64.b64decode(order.result_pdf)
     return StreamingResponse(
         BytesIO(pdf_bytes),
@@ -2141,6 +2163,7 @@ def create_abn(
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
 
     abn = models.AdvanceBeneficiaryNotice(
         lab_order_id     = body.get("lab_order_id"),
@@ -2169,7 +2192,14 @@ def list_abns(
     """List ABNs, optionally filtered by patient or lab order."""
     q = db.query(models.AdvanceBeneficiaryNotice)
     if patient_id:
+        _list_abn_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if not _list_abn_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_list_abn_patient, current_user)
         q = q.filter(models.AdvanceBeneficiaryNotice.patient_id == patient_id)
+    elif current_user.role == "staff":
+        # Staff may only see ABNs for their own patients; without a patient_id filter
+        # we restrict to patients they have access to rather than exposing all records.
+        raise HTTPException(status_code=400, detail="patient_id is required")
     if lab_order_id:
         q = q.filter(models.AdvanceBeneficiaryNotice.lab_order_id == lab_order_id)
     return [_abn_dict(a) for a in q.order_by(models.AdvanceBeneficiaryNotice.created_at.desc()).all()]
@@ -2185,6 +2215,9 @@ def get_abn(
         models.AdvanceBeneficiaryNotice.id == abn_id).first()
     if not abn:
         raise HTTPException(status_code=404, detail="ABN not found")
+    _get_abn_patient = db.query(models.Patient).filter(models.Patient.id == abn.patient_id).first()
+    if not _get_abn_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_get_abn_patient, current_user)
     return _abn_dict(abn)
 
 
@@ -2203,6 +2236,9 @@ def sign_abn(
         models.AdvanceBeneficiaryNotice.id == abn_id).first()
     if not abn:
         raise HTTPException(status_code=404, detail="ABN not found")
+    _sign_abn_patient = db.query(models.Patient).filter(models.Patient.id == abn.patient_id).first()
+    if not _sign_abn_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_sign_abn_patient, current_user)
 
     decision = body.get("patient_decision", "")
     if decision not in ("OPTION_1", "OPTION_2", "OPTION_3"):
@@ -2242,6 +2278,9 @@ def void_abn(
         models.AdvanceBeneficiaryNotice.id == abn_id).first()
     if not abn:
         raise HTTPException(status_code=404, detail="ABN not found")
+    _void_abn_patient = db.query(models.Patient).filter(models.Patient.id == abn.patient_id).first()
+    if not _void_abn_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_void_abn_patient, current_user)
     abn.status = "voided"
     abn.updated_at = datetime.utcnow()
     db.commit()
@@ -2382,6 +2421,11 @@ def list_lesion_images(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _img_lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
+    if not _img_lesion: raise HTTPException(status_code=404, detail="Lesion not found")
+    _img_patient = db.query(models.Patient).filter(models.Patient.id == _img_lesion.patient_id).first()
+    if not _img_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_img_patient, current_user)
     imgs = (db.query(models.LesionImage)
             .filter(models.LesionImage.lesion_id == lesion_id)
             .order_by(models.LesionImage.taken_at.asc(), models.LesionImage.created_at.asc())
@@ -2835,6 +2879,9 @@ def update_imaging_order(
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _upd_img_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _upd_img_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_upd_img_patient, current_user)
     now = datetime.utcnow()
     for field in ["study_type","body_part","clinical_indication","priority",
                   "facility","fax_number","cpt_code","notes","result_notes"]:
@@ -2979,6 +3026,8 @@ async def fax_imaging_order(
         raise HTTPException(status_code=400, detail="No fax number set for this order")
 
     patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     physician = db.query(models.User).filter(models.User.id == order.physician_id).first() or current_user
 
     await _do_fax_imaging_order(order, patient, physician, current_user.id, db)
@@ -2995,6 +3044,9 @@ async def imaging_fax_status(
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _fax_stat_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _fax_stat_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_fax_stat_patient, current_user)
     if order.telnyx_fax_id and _telnyx_configured():
         headers = {"Authorization": f"Bearer {TELNYX_API_KEY}"}
         r = httpx.get(f"https://api.telnyx.com/v2/faxes/{order.telnyx_fax_id}", headers=headers, timeout=10)
@@ -3022,6 +3074,9 @@ async def upload_imaging_results(
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _img_res_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _img_res_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_img_res_patient, current_user)
 
     if "multipart" in content_type:
         form = await request.form()
@@ -3056,6 +3111,11 @@ def download_imaging_result_pdf(
     order = db.query(models.ImagingOrder).filter(models.ImagingOrder.id == order_id).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    _img_pdf_patient = db.query(models.Patient).filter(models.Patient.id == order.patient_id).first()
+    if not _img_pdf_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_img_pdf_patient, current_user)
+    audit(db, current_user.id, "EXPORT_PHI_PDF", "ImagingOrder", str(order_id),
+          f"Imaging result PDF downloaded for patient_id={order.patient_id}")
     # Try DB blob first (new path), fall back to legacy filesystem path
     if order.result_file_data:
         pdf_bytes = base64.b64decode(order.result_file_data)
@@ -4915,6 +4975,10 @@ def prescription_pdf(
         raise HTTPException(status_code=404, detail="Not found")
 
     patient  = db.query(models.Patient).filter(models.Patient.id == rx.patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+    audit(db, current_user.id, "EXPORT_PHI_PDF", "Prescription", str(rx_id),
+          f"Prescription PDF exported for patient_id={rx.patient_id}")
     provider = db.query(models.User).filter(models.User.id == rx.physician_id).first()
 
     buf = BytesIO()
@@ -5044,6 +5108,9 @@ def fax_prescription(
     rx = db.query(models.Prescription).filter(models.Prescription.id == rx_id).first()
     if not rx:
         raise HTTPException(status_code=404, detail="Prescription not found")
+    _fax_rx_patient = db.query(models.Patient).filter(models.Patient.id == rx.patient_id).first()
+    if not _fax_rx_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_fax_rx_patient, current_user)
     if rx.status not in ("signed", "transmitted"):
         raise HTTPException(status_code=400, detail="Prescription must be signed before faxing")
     if not rx.pharmacy_fax:
