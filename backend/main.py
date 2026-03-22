@@ -5862,16 +5862,19 @@ def portal_export_records(
 _IMPORT_PROMPT = """You are a clinical data extraction engine for an EMR system.
 You will receive raw text extracted from a patient record (referral note, discharge summary, old chart, lab report, etc.).
 
-Your job is to extract and structure ALL clinical information into these four categories:
-
-1. clinical_notes  — Any narrative visit notes, progress notes, consult notes, H&P, discharge summaries, etc.
-2. lab_results     — Any laboratory test results with test name, value, units, reference range, and date.
-3. imaging_orders  — Any radiology/imaging reports or orders (X-ray, CT, MRI, ultrasound, etc.).
-4. medications     — Any medication lists, prescriptions, or current meds sections.
+Your job is to:
+1. Extract and structure ALL clinical information into four categories (notes, labs, imaging, medications).
+2. Write a concise medical history summary of the patient based solely on what is present in this document.
+3. List specific, actionable recommended next steps a physician should consider based on the findings.
 
 Return ONLY valid JSON in exactly this structure — no markdown, no prose, just JSON:
 {
-  "summary": "One sentence describing what this document is.",
+  "summary": "One sentence describing what type of document this is.",
+  "medical_history_summary": "A 3-5 sentence narrative paragraph summarizing the patient's relevant medical history, active conditions, and current medication regimen as described in this document. Write in clinical language suitable for a physician. Do not invent anything not present in the document.",
+  "recommended_next_steps": [
+    "Specific, actionable follow-up item based on the document findings (e.g. 'Follow up on elevated HbA1c of 8.2% — consider adjusting diabetes regimen')",
+    "Another specific action item"
+  ],
   "clinical_notes": [
     {
       "visit_date": "YYYY-MM-DD or empty string if unknown",
@@ -5912,7 +5915,11 @@ Return ONLY valid JSON in exactly this structure — no markdown, no prose, just
   ]
 }
 
-If a category has no data, return an empty array for it. Do not invent data — only extract what is present.
+Rules:
+- If a category has no data, return an empty array for it.
+- Do not invent clinical data — only extract what is explicitly present in the document.
+- recommended_next_steps should be specific (cite values, dates, findings) — not generic advice.
+- medical_history_summary should read like a concise referral paragraph, not a list.
 """
 
 
@@ -5951,11 +5958,16 @@ def _call_import_ai(raw_text: str) -> dict:
     return json.loads(raw_json)
 
 
-def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Session) -> dict:
-    """Create real DB records from the AI-parsed import data."""
+def _file_imported_data(patient_id: int, parsed: dict, physician_id: int,
+                        import_id: int, db: Session) -> dict:
+    """Create DB records from AI-parsed import data in 'pending_review' status.
+
+    All records are tagged with source_import_id so they can be bulk-approved
+    or discarded later via the review endpoints.
+    """
     counts = {"notes": 0, "labs": 0, "imaging": 0, "meds": 0}
 
-    # ── Clinical notes ───────────────────────────────────────────────────────
+    # ── Clinical notes — filed as drafts pending physician review ─────────────
     for n in parsed.get("clinical_notes", []):
         try:
             visit_dt = datetime.strptime(n.get("visit_date", ""), "%Y-%m-%d") if n.get("visit_date") else datetime.utcnow()
@@ -5970,13 +5982,14 @@ def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Se
             hpi=n.get("hpi", ""),
             assessment=n.get("assessment", ""),
             plan=n.get("plan", ""),
-            status="signed",   # imported notes are treated as historical/signed
-            ai_generated=False,
+            status="pending_review",   # physician must approve before it becomes signed
+            ai_generated=True,
+            source_import_id=import_id,
         )
         db.add(note)
         counts["notes"] += 1
 
-    # ── Lab results — store as LabOrder with result data ────────────────────
+    # ── Lab results ───────────────────────────────────────────────────────────
     if parsed.get("lab_results"):
         result_observations = []
         for lr in parsed["lab_results"]:
@@ -5988,20 +6001,20 @@ def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Se
                 "flag": lr.get("flag", "unknown"),
                 "date": lr.get("date", ""),
             })
-        # Group all imported labs into a single "imported" order
         order = models.LabOrder(
             patient_id=patient_id,
             physician_id=physician_id,
             tests=json.dumps([lr.get("test_name", "") for lr in parsed["lab_results"]]),
-            clinical_indication="Imported from external record",
-            status="resulted",
-            notes="Imported via record import feature",
+            clinical_indication="Imported from external record — pending physician review",
+            status="pending_review",
+            notes="AI-imported. Approve or discard via the import review panel.",
             result_data=json.dumps(result_observations),
+            source_import_id=import_id,
         )
         db.add(order)
         counts["labs"] = len(parsed["lab_results"])
 
-    # ── Imaging ──────────────────────────────────────────────────────────────
+    # ── Imaging ───────────────────────────────────────────────────────────────
     for img in parsed.get("imaging_orders", []):
         try:
             sched = datetime.strptime(img.get("date", ""), "%Y-%m-%d") if img.get("date") else None
@@ -6013,15 +6026,16 @@ def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Se
             study_type=img.get("study_type", "Other"),
             body_part=img.get("body_part", ""),
             clinical_indication=img.get("clinical_indication", "Imported from external record"),
-            status="results_received" if img.get("result_notes") else "completed",
+            status="pending_review",
             result_notes=img.get("result_notes", ""),
             scheduled_at=sched,
             completed_at=sched,
+            source_import_id=import_id,
         )
         db.add(io_rec)
         counts["imaging"] += 1
 
-    # ── Medications ──────────────────────────────────────────────────────────
+    # ── Medications — inactive until approved ─────────────────────────────────
     for med in parsed.get("medications", []):
         m = models.PatientMedication(
             patient_id=patient_id,
@@ -6030,7 +6044,9 @@ def _file_imported_data(patient_id: int, parsed: dict, physician_id: int, db: Se
             frequency=med.get("frequency", ""),
             route=med.get("route", "oral"),
             indication=med.get("indication", ""),
-            is_active=True,
+            is_active=False,   # activated on approval
+            notes="AI-imported — pending physician review",
+            source_import_id=import_id,
         )
         db.add(m)
         counts["meds"] += 1
@@ -6050,8 +6066,11 @@ async def import_patient_records(
 ):
     """
     Accept a PDF upload or pasted text, parse with AI, and file into the
-    appropriate tabs of the patient chart automatically.
+    appropriate tabs of the patient chart as pending_review records.
+    Only physicians and admins may import records (HIPAA minimum-necessary).
     """
+    if current_user.role not in ("physician", "admin"):
+        raise HTTPException(status_code=403, detail="Only physicians and admins may import records.")
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
@@ -6103,9 +6122,9 @@ async def import_patient_records(
         db.commit()
         raise HTTPException(status_code=502, detail=f"AI parsing failed: {e}")
 
-    # ── File the data ─────────────────────────────────────────────────────────
+    # ── File the data as pending_review ───────────────────────────────────────
     try:
-        counts = _file_imported_data(patient_id, parsed, current_user.id, db)
+        counts = _file_imported_data(patient_id, parsed, current_user.id, imp.id, db)
     except Exception as e:
         imp.status = "error"
         imp.error_detail = str(e)
@@ -6113,23 +6132,115 @@ async def import_patient_records(
         raise HTTPException(status_code=500, detail=f"Failed to file records: {e}")
 
     # ── Update import record ─────────────────────────────────────────────────
-    imp.ai_summary = parsed.get("summary", "")
-    imp.notes_filed = counts["notes"]
-    imp.labs_filed = counts["labs"]
+    imp.ai_summary              = parsed.get("summary", "")
+    imp.medical_history_summary = parsed.get("medical_history_summary", "")
+    imp.recommended_next_steps  = json.dumps(parsed.get("recommended_next_steps", []))
+    imp.notes_filed   = counts["notes"]
+    imp.labs_filed    = counts["labs"]
     imp.imaging_filed = counts["imaging"]
-    imp.meds_filed = counts["meds"]
-    imp.status = "complete"
+    imp.meds_filed    = counts["meds"]
+    imp.status        = "complete"
+    imp.review_status = "pending_review"
     db.commit()
 
     audit(db, current_user.id, "IMPORT_RECORDS", "Patient", str(patient_id), request=request,
           details=f"import_id={imp.id} notes={counts['notes']} labs={counts['labs']} "
-                  f"imaging={counts['imaging']} meds={counts['meds']}")
+                  f"imaging={counts['imaging']} meds={counts['meds']} status=pending_review")
 
     return {
-        "import_id": imp.id,
-        "summary": imp.ai_summary,
-        "filed": counts,
+        "import_id":               imp.id,
+        "summary":                 imp.ai_summary,
+        "medical_history_summary": imp.medical_history_summary,
+        "recommended_next_steps":  parsed.get("recommended_next_steps", []),
+        "filed":                   counts,
+        "review_status":           "pending_review",
     }
+
+
+# ── Import review: approve / discard ─────────────────────────────────────────
+
+@app.post("/api/imported-records/{import_id}/approve")
+def approve_import(
+    import_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Physician approves an AI import — all pending_review records go live."""
+    if current_user.role not in ("physician", "admin"):
+        raise HTTPException(status_code=403, detail="Only physicians and admins may approve imports.")
+    imp = db.query(models.ImportedRecord).filter(models.ImportedRecord.id == import_id).first()
+    if not imp:
+        raise HTTPException(status_code=404, detail="Import record not found")
+    if imp.review_status == "approved":
+        return {"ok": True, "already_approved": True}
+
+    # Activate clinical notes → signed
+    db.query(models.ClinicalNote).filter(
+        models.ClinicalNote.source_import_id == import_id
+    ).update({"status": "signed", "ai_generated": True}, synchronize_session=False)
+
+    # Activate lab orders → resulted
+    db.query(models.LabOrder).filter(
+        models.LabOrder.source_import_id == import_id
+    ).update({"status": "resulted"}, synchronize_session=False)
+
+    # Activate imaging → results_received (if result notes present) else completed
+    imaging_rows = db.query(models.ImagingOrder).filter(
+        models.ImagingOrder.source_import_id == import_id
+    ).all()
+    for img in imaging_rows:
+        img.status = "results_received" if img.result_notes else "completed"
+
+    # Activate medications
+    db.query(models.PatientMedication).filter(
+        models.PatientMedication.source_import_id == import_id
+    ).update({"is_active": True}, synchronize_session=False)
+
+    imp.review_status = "approved"
+    db.commit()
+
+    audit(db, current_user.id, "IMPORT_APPROVED", "ImportedRecord", str(import_id),
+          request=request, details=f"patient_id={imp.patient_id}")
+    return {"ok": True, "review_status": "approved"}
+
+
+@app.post("/api/imported-records/{import_id}/discard")
+def discard_import(
+    import_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Physician discards an AI import — all pending_review records are deleted."""
+    if current_user.role not in ("physician", "admin"):
+        raise HTTPException(status_code=403, detail="Only physicians and admins may discard imports.")
+    imp = db.query(models.ImportedRecord).filter(models.ImportedRecord.id == import_id).first()
+    if not imp:
+        raise HTTPException(status_code=404, detail="Import record not found")
+    if imp.review_status == "discarded":
+        return {"ok": True, "already_discarded": True}
+
+    # Delete all records tagged to this import
+    db.query(models.ClinicalNote).filter(
+        models.ClinicalNote.source_import_id == import_id
+    ).delete(synchronize_session=False)
+    db.query(models.LabOrder).filter(
+        models.LabOrder.source_import_id == import_id
+    ).delete(synchronize_session=False)
+    db.query(models.ImagingOrder).filter(
+        models.ImagingOrder.source_import_id == import_id
+    ).delete(synchronize_session=False)
+    db.query(models.PatientMedication).filter(
+        models.PatientMedication.source_import_id == import_id
+    ).delete(synchronize_session=False)
+
+    imp.review_status = "discarded"
+    db.commit()
+
+    audit(db, current_user.id, "IMPORT_DISCARDED", "ImportedRecord", str(import_id),
+          request=request, details=f"patient_id={imp.patient_id}")
+    return {"ok": True, "review_status": "discarded"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

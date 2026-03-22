@@ -53,6 +53,15 @@ _migrations = [
         error_detail TEXT DEFAULT '',
         created_at TIMESTAMP DEFAULT NOW()
     )""",
+    # ── Import review gate columns ────────────────────────────────────────────
+    "ALTER TABLE imported_records ADD COLUMN IF NOT EXISTS medical_history_summary TEXT DEFAULT ''",
+    "ALTER TABLE imported_records ADD COLUMN IF NOT EXISTS recommended_next_steps TEXT DEFAULT '[]'",
+    "ALTER TABLE imported_records ADD COLUMN IF NOT EXISTS review_status VARCHAR DEFAULT 'pending_review'",
+    # source_import_id on each record type — links filed records back to their import
+    "ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
+    "ALTER TABLE lab_orders ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
+    "ALTER TABLE imaging_orders ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
+    "ALTER TABLE patient_medications ADD COLUMN IF NOT EXISTS source_import_id INTEGER",
 ]
 with engine.connect() as _conn:
     for _sql in _migrations:

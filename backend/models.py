@@ -76,8 +76,9 @@ class ClinicalNote(Base):
     cpt_codes = Column(Text, default="[]")     # JSON string
     note_type = Column(String, default="SOAP")
     ai_generated = Column(Boolean, default=False)
-    status = Column(String, default="draft")   # draft, signed, amended
+    status = Column(String, default="draft")   # draft, signed, amended, pending_review
     patient_visible = Column(Boolean, default=False)  # released to patient portal
+    source_import_id = Column(Integer, nullable=True)  # FK to imported_records.id (set after table created)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -104,6 +105,7 @@ class LabOrder(Base):
     result_received_at = Column(DateTime, nullable=True)
     result_data       = Column(Text, nullable=True)     # JSON array of observations
     result_pdf        = Column(Text, nullable=True)     # Base64-encoded result PDF
+    source_import_id  = Column(Integer, nullable=True)  # FK to imported_records.id
 
 
 class ImagingOrder(Base):
@@ -131,6 +133,7 @@ class ImagingOrder(Base):
     result_file_path = Column(String, default="")     # legacy filesystem path (deprecated)
     result_file_data = Column(Text, nullable=True)    # base64-encoded PDF stored in DB (Risk 12)
     result_file_name = Column(String, default="")     # original filename for download
+    source_import_id = Column(Integer, nullable=True)  # FK to imported_records.id
     created_at  = Column(DateTime, default=datetime.utcnow)
 
 
@@ -219,6 +222,7 @@ class PatientMedication(Base):
     indication = Column(String, default="")
     is_active = Column(Boolean, default=True)
     notes = Column(Text, default="")
+    source_import_id = Column(Integer, nullable=True)  # FK to imported_records.id
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -583,13 +587,16 @@ class ImportedRecord(Base):
     filename      = Column(String, default="")
     source_type   = Column(String, default="pdf")           # pdf | text
     raw_text      = Column(Text, default="")                # extracted text sent to AI
-    ai_summary    = Column(Text, default="")                # AI's summary of what was filed
+    ai_summary             = Column(Text, default="")   # one-line document summary
+    medical_history_summary= Column(Text, default="")   # AI narrative of patient's medical history
+    recommended_next_steps = Column(Text, default="[]") # JSON array of action items
     # Counts of records created
     notes_filed   = Column(Integer, default=0)
     labs_filed    = Column(Integer, default=0)
     imaging_filed = Column(Integer, default=0)
     meds_filed    = Column(Integer, default=0)
-    status        = Column(String, default="pending")       # pending|complete|error
+    status        = Column(String, default="pending")        # pending|complete|error
+    review_status = Column(String, default="pending_review") # pending_review|approved|discarded
     error_detail  = Column(Text, default="")
     created_at    = Column(DateTime, default=datetime.utcnow)
 

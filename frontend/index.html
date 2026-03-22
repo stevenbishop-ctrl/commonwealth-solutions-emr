@@ -831,6 +831,7 @@ function PatientChart({token,patient,onBack,user}){
   const [importText,setImportText]=useState('');
   const [importing,setImporting]=useState(false);
   const [importResult,setImportResult]=useState(null);
+  const [reviewAction,setReviewAction]=useState(null); // 'approving'|'discarding'|null
   const importFileRef=React.useRef();
   const [editingPatient,setEditingPatient]=useState(false);
   const [portalForm,setPortalForm]=useState({email:'',password:''});
@@ -888,9 +889,41 @@ function PatientChart({token,patient,onBack,user}){
       api('GET',`/api/notes?patient_id=${pid}`,null,token).then(d=>d&&setNotes(d));
       api('GET',`/api/lab-orders?patient_id=${pid}`,null,token).then(d=>d&&setLabs(d));
       api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
-      toast(`Import complete — ${r.filed.notes} notes, ${r.filed.labs} labs, ${r.filed.imaging} imaging, ${r.filed.meds} meds filed`,'success');
+      toast(`Import complete — ${r.filed.notes} notes, ${r.filed.labs} labs, ${r.filed.imaging} imaging, ${r.filed.meds} meds filed. Review and approve below.`,'success');
     }catch(e){toast(e.message,'error');}
     setImporting(false);
+  };
+
+  const approveImport=async()=>{
+    if(!importResult?.import_id) return;
+    setReviewAction('approving');
+    try{
+      await api('POST',`/api/imported-records/${importResult.import_id}/approve`,{},token);
+      setImportResult(r=>({...r,review_status:'approved'}));
+      // Refresh all tabs to show now-active records
+      const pid=patient.id;
+      api('GET',`/api/notes?patient_id=${pid}`,null,token).then(d=>d&&setNotes(d));
+      api('GET',`/api/lab-orders?patient_id=${pid}`,null,token).then(d=>d&&setLabs(d));
+      api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
+      toast('Import approved — records are now active in the chart','success');
+    }catch(e){toast(e.message,'error');}
+    setReviewAction(null);
+  };
+
+  const discardImport=async()=>{
+    if(!importResult?.import_id) return;
+    if(!confirm('Discard this import? All pending records will be permanently deleted.')) return;
+    setReviewAction('discarding');
+    try{
+      await api('POST',`/api/imported-records/${importResult.import_id}/discard`,{},token);
+      setImportResult(r=>({...r,review_status:'discarded'}));
+      const pid=patient.id;
+      api('GET',`/api/notes?patient_id=${pid}`,null,token).then(d=>d&&setNotes(d));
+      api('GET',`/api/lab-orders?patient_id=${pid}`,null,token).then(d=>d&&setLabs(d));
+      api('GET',`/api/imaging-orders?patient_id=${pid}`,null,token).then(d=>d&&setImaging(d));
+      toast('Import discarded — all pending records removed');
+    }catch(e){toast(e.message,'error');}
+    setReviewAction(null);
   };
 
   const downloadPDF=async(noteId)=>{
@@ -1580,16 +1613,72 @@ function PatientChart({token,patient,onBack,user}){
             />
 
             {importResult&&(
-              <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:14,marginTop:14}}>
-                <div style={{fontWeight:700,color:'#15803d',marginBottom:6}}>✅ Import complete</div>
-                <div style={{fontSize:13,color:'#166534'}}>{importResult.summary}</div>
-                <div style={{display:'flex',gap:12,marginTop:10,flexWrap:'wrap'}}>
-                  {[['Notes',importResult.filed.notes,'📋'],['Labs',importResult.filed.labs,'🧪'],['Imaging',importResult.filed.imaging,'🩻'],['Medications',importResult.filed.meds,'💊']].map(([l,n,e])=>(
-                    <div key={l} style={{background:'white',border:'1px solid #bbf7d0',borderRadius:6,padding:'6px 12px',fontSize:13,fontWeight:600}}>
-                      {e} {n} {l}
+              <div style={{marginTop:16}}>
+                {/* ── Status banner ── */}
+                {importResult.review_status==='approved'&&(
+                  <div style={{background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#15803d',fontWeight:600}}>
+                    ✅ Import approved — all records are now active in the chart.
+                  </div>
+                )}
+                {importResult.review_status==='discarded'&&(
+                  <div style={{background:'#fef2f2',border:'1px solid #fecaca',borderRadius:8,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#dc2626',fontWeight:600}}>
+                    🗑 Import discarded — all pending records were removed.
+                  </div>
+                )}
+                {importResult.review_status==='pending_review'&&(
+                  <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:13,color:'#92400e',fontWeight:600}}>
+                    ⏳ Records are pending your review. Approve or discard below.
+                  </div>
+                )}
+
+                {/* ── Records filed count ── */}
+                <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}}>
+                  {[['📋',importResult.filed.notes,'Notes'],['🧪',importResult.filed.labs,'Labs'],['🩻',importResult.filed.imaging,'Imaging'],['💊',importResult.filed.meds,'Meds']].map(([e,n,l])=>(
+                    <div key={l} style={{background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:'8px 14px',fontSize:13,fontWeight:600,color:'#334155',display:'flex',alignItems:'center',gap:6}}>
+                      {e} <span style={{fontSize:17,fontWeight:800}}>{n}</span> {l}
                     </div>
                   ))}
                 </div>
+
+                {/* ── Medical history summary ── */}
+                {importResult.medical_history_summary&&(
+                  <div style={{background:'#f1f5f9',border:'1px solid #e2e8f0',borderRadius:8,padding:'12px 14px',marginBottom:12}}>
+                    <div style={{fontWeight:700,fontSize:13,color:'#334155',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
+                      🩺 Medical History Summary
+                    </div>
+                    <p style={{fontSize:13.5,color:'#1e293b',margin:0,lineHeight:1.65}}>
+                      {importResult.medical_history_summary}
+                    </p>
+                  </div>
+                )}
+
+                {/* ── Recommended next steps ── */}
+                {importResult.recommended_next_steps?.length>0&&(
+                  <div style={{background:'#fefce8',border:'1px solid #fde047',borderRadius:8,padding:'12px 14px',marginBottom:14}}>
+                    <div style={{fontWeight:700,fontSize:13,color:'#713f12',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>
+                      ⚡ Recommended Next Steps
+                    </div>
+                    <ul style={{margin:0,paddingLeft:18}}>
+                      {importResult.recommended_next_steps.map((s,i)=>(
+                        <li key={i} style={{fontSize:13,color:'#422006',marginBottom:5,lineHeight:1.5}}>{s}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* ── Approve / Discard ── */}
+                {importResult.review_status==='pending_review'&&(
+                  <div style={{display:'flex',gap:10}}>
+                    <button className="btn btn-success" style={{flex:1,justifyContent:'center'}}
+                      onClick={approveImport} disabled={!!reviewAction}>
+                      {reviewAction==='approving'?<><Spinner/> Approving…</>:'✓ Approve & Activate All Records'}
+                    </button>
+                    <button className="btn btn-warning" style={{flex:1,justifyContent:'center'}}
+                      onClick={discardImport} disabled={!!reviewAction}>
+                      {reviewAction==='discarding'?<><Spinner/> Discarding…</>:'✗ Discard All'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
