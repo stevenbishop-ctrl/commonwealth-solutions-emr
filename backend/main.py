@@ -826,7 +826,12 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Session invalidated — please log in again")
     # ── Idle session timeout (HIPAA §164.312(a)(2)(iii)) ────────────────────────
     now = datetime.utcnow()
-    if IDLE_TIMEOUT_MINUTES > 0:
+    # Derive token issue-time from exp so fresh logins are never killed by stale last_active.
+    token_exp = payload.get("exp")
+    token_iat = (datetime.utcfromtimestamp(token_exp) - timedelta(hours=TOKEN_HOURS)
+                 if token_exp else None)
+    just_issued = token_iat is not None and (now - token_iat).total_seconds() < 120
+    if IDLE_TIMEOUT_MINUTES > 0 and not just_issued:
         last_active = getattr(user, "last_active", None)
         if last_active and (now - last_active).total_seconds() > IDLE_TIMEOUT_MINUTES * 60:
             raise HTTPException(
