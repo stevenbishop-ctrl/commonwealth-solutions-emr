@@ -75,6 +75,26 @@ print("✅ Schema migrations applied.")
 db = SessionLocal()
 
 # ── Admin user ──────────────────────────────────────────────────────────────
+# If RESET_ADMIN_PW is set, forcibly update the admin password and exit.
+# Use this to recover a forgotten/unknown admin password:
+#   1. Set RESET_ADMIN_PW=YourNewPassword123! in Railway environment variables
+#   2. Redeploy — setup.py will reset the password and print confirmation
+#   3. Log in with admin / <RESET_ADMIN_PW value>
+#   4. Change your password in Settings, then remove RESET_ADMIN_PW from Railway
+_reset_pw = os.environ.get("RESET_ADMIN_PW", "").strip()
+if _reset_pw:
+    _admin = db.query(models.User).filter(models.User.username == "admin").first()
+    if _admin:
+        _admin.password_hash = bcrypt.hashpw(_reset_pw.encode(), bcrypt.gensalt()).decode()
+        _admin.token_version = (_admin.token_version or 0) + 1  # invalidate all existing sessions
+        db.commit()
+        print(f"✅ Admin password reset via RESET_ADMIN_PW env var.")
+        print(f"   Login with: admin / {_reset_pw}")
+        print(f"   IMPORTANT: remove RESET_ADMIN_PW from your environment after logging in!")
+    else:
+        print("⚠️  RESET_ADMIN_PW set but no admin user found — will be created below.")
+    sys.stdout.flush()
+
 existing = db.query(models.User).filter(models.User.username == "admin").first()
 if not existing:
     admin = models.User(
