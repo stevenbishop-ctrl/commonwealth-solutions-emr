@@ -775,6 +775,34 @@ TOKEN_HOURS = int(os.getenv("TOKEN_EXPIRE_HOURS", "8"))
 IDLE_TIMEOUT_MINUTES = int(os.getenv("IDLE_TIMEOUT_MINUTES", "30"))
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
+# ── Startup config validation ──────────────────────────────────────────────────
+# Warn on startup about optional integrations that are not yet configured so
+# operators know which features are disabled without digging through the code.
+_startup_logger = logging.getLogger("medflow.startup")
+_OPTIONAL_INTEGRATIONS = [
+    ("SQUARE_ACCESS_TOKEN",         "Square Payments — billing/membership charges disabled"),
+    ("SQUARE_WEBHOOK_SIGNATURE_KEY","Square Webhooks — webhook signature validation disabled"),
+    ("LABCORP_CLIENT_ID",           "LabCorp API — lab orders will use catalog-only mode (no live ordering)"),
+    ("LABCORP_WEBHOOK_SECRET",      "LabCorp Webhooks — result callbacks will not be signature-verified"),
+    ("TELNYX_API_KEY",              "Telnyx SMS — patient messaging disabled"),
+    ("TELNYX_PUBLIC_KEY",           "Telnyx Webhooks — SMS webhook signature verification disabled"),
+    ("ZAPRITE_API_KEY",             "Zaprite Bitcoin payments — disabled"),
+    ("ZAPRITE_WEBHOOK_SECRET",      "Zaprite Webhooks — webhook signature validation disabled"),
+    ("WENO_PARTNER_ID",             "WENO e-Prescribing — electronic prescriptions disabled"),
+    ("SENDGRID_API_KEY",            "SendGrid — transactional email disabled"),
+    ("FAX_API_KEY",                 "Fax integration — outbound faxing disabled"),
+    ("OPENAI_API_KEY",              "OpenAI — AI import summarization disabled"),
+]
+_missing_integrations = [(k, desc) for k, desc in _OPTIONAL_INTEGRATIONS if not os.getenv(k, "").strip()]
+if _missing_integrations:
+    _startup_logger.warning(
+        "MedFlow startup — %d optional integration(s) not configured:", len(_missing_integrations)
+    )
+    for _ik, _idesc in _missing_integrations:
+        _startup_logger.warning("  [NOT SET] %s: %s", _ik, _idesc)
+else:
+    _startup_logger.info("MedFlow startup — all optional integrations configured.")
+
 # ── DB dependency ─────────────────────────────────────────────────────────────
 def get_db():
     db = SessionLocal()
@@ -1223,10 +1251,30 @@ def list_patients(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    from sqlalchemy import exists as _sa_exists
     q = db.query(models.Patient)
-    # Minimum necessary: staff only see patients they registered
+    # Minimum necessary (HIPAA §164.502(b)): scope to own patients.
+    # Staff see patients they registered; physicians see patients they created
+    # or have any clinical record for (note, lab order, or imaging order).
     if current_user.role == "staff":
         q = q.filter(models.Patient.created_by == current_user.id)
+    elif current_user.role == "physician":
+        has_note    = _sa_exists().where(
+            (models.ClinicalNote.patient_id  == models.Patient.id) &
+            (models.ClinicalNote.physician_id == current_user.id)
+        )
+        has_lab     = _sa_exists().where(
+            (models.LabOrder.patient_id  == models.Patient.id) &
+            (models.LabOrder.physician_id == current_user.id)
+        )
+        has_imaging = _sa_exists().where(
+            (models.ImagingOrder.patient_id  == models.Patient.id) &
+            (models.ImagingOrder.physician_id == current_user.id)
+        )
+        q = q.filter(
+            (models.Patient.created_by == current_user.id) |
+            has_note | has_lab | has_imaging
+        )
     if search:
         s = f"%{search}%"
         q = q.filter(
