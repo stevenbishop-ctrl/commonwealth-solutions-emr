@@ -550,7 +550,9 @@ app.add_middleware(SecurityHeadersMiddleware)
 # State-changing requests must include an X-CSRF-Token header that matches the
 # mf_csrf non-httpOnly cookie set at login.  SameSite=Strict on the auth cookie
 # already blocks cross-site attacks in modern browsers; this is defense-in-depth.
-_CSRF_EXEMPT_PREFIXES = ("/api/auth/login", "/api/auth/mfa/verify", "/portal/login",
+_CSRF_EXEMPT_PREFIXES = ("/api/auth/login", "/api/auth/mfa/verify",
+                         "/api/auth/reset-expired-password",
+                         "/portal/login",
                          "/health", "/api/zaprite/webhook", "/api/telnyx/",
                          "/api/sms/", "/api/public/", "/api/fax-pdf/")
 
