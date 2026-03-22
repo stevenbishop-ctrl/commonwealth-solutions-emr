@@ -805,21 +805,27 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> models.User:
     # Prefer httpOnly cookie (XSS-safe); fall back to Authorization: Bearer header
-    token = request.cookies.get("mf_auth") or token_header
+    cookie_token = request.cookies.get("mf_auth")
+    token = cookie_token or token_header
+    logging.debug("AUTH cookie=%s bearer=%s", bool(cookie_token), bool(token_header))
     if not token:
+        logging.warning("AUTH FAIL: no token (cookie=%s, bearer=%s)", cookie_token, token_header)
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload["sub"])
         token_version = int(payload.get("tv", 0))
-    except (JWTError, KeyError, ValueError):
+    except (JWTError, KeyError, ValueError) as e:
+        logging.warning("AUTH FAIL: jwt decode error: %s | token_prefix=%s", e, token[:20] if token else None)
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user or not user.is_active:
+        logging.warning("AUTH FAIL: user %s not found or disabled", user_id)
         raise HTTPException(status_code=401, detail="User not found or disabled")
     # Reject tokens issued before a password change
     current_tv = getattr(user, "token_version", 0) or 0
     if token_version != current_tv:
+        logging.warning("AUTH FAIL: token_version mismatch token=%s db=%s user=%s", token_version, current_tv, user_id)
         raise HTTPException(status_code=401, detail="Session invalidated — please log in again")
     # ── Idle session timeout (HIPAA §164.312(a)(2)(iii)) ────────────────────────
     now = datetime.utcnow()
