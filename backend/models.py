@@ -51,6 +51,7 @@ class Patient(Base):
     portal_email = Column(String, default="")
     portal_password_hash = Column(String, default="")
     portal_active = Column(Boolean, default=False)
+    portal_last_active = Column(DateTime, nullable=True)  # Drives portal idle timeout
     # Communication consent (HIPAA §164.522; state law)
     sms_consent       = Column(Boolean, default=False)   # Patient consented to SMS PHI communication
     sms_consent_date  = Column(DateTime, nullable=True)  # Date/time consent was recorded
@@ -553,6 +554,7 @@ class AuditLog(Base):
     resource_type = Column(String)
     resource_id = Column(String)
     ip_address = Column(String, default="")
+    user_agent = Column(String, default="")
     details = Column(Text, default="")
     timestamp = Column(DateTime, default=datetime.utcnow)
 

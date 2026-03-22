@@ -32,7 +32,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -694,7 +694,8 @@ def get_db():
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 def hash_pw(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    # HIPAA best-practice: bcrypt cost ≥12; 13 balances security and latency.
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=13)).decode()
 
 
 def verify_pw(password: str, hashed: str) -> bool:
@@ -710,9 +711,14 @@ def make_token(user_id: int, role: str, token_version: int = 0) -> str:
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token_header: Optional[str] = Depends(OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)),
     db: Session = Depends(get_db),
 ) -> models.User:
+    # Prefer httpOnly cookie (XSS-safe); fall back to Authorization: Bearer header
+    token = request.cookies.get("mf_auth") or token_header
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = int(payload["sub"])
@@ -768,13 +774,15 @@ def audit(
     details: str = "",
     request: Request = None,
 ):
-    ip = request.client.host if request else ""
+    ip         = request.client.host if request else ""
+    user_agent = request.headers.get("user-agent", "") if request else ""
     log = models.AuditLog(
         user_id=user_id,
         action=action,
         resource_type=resource_type,
         resource_id=resource_id,
         ip_address=ip,
+        user_agent=user_agent,
         details=details,
         timestamp=datetime.utcnow(),
     )
@@ -868,7 +876,13 @@ def login(
     tv = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
-    return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
+    resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
+    resp.set_cookie(
+        key="mf_auth", value=token,
+        httponly=True, secure=True, samesite="strict",
+        max_age=TOKEN_HOURS * 3600, path="/",
+    )
+    return resp
 
 
 @app.post("/api/auth/mfa/verify")
@@ -892,7 +906,13 @@ def mfa_verify(data: dict, request: Request = None, db: Session = Depends(get_db
     tv2 = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv2)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
-    return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
+    resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
+    resp.set_cookie(
+        key="mf_auth", value=token,
+        httponly=True, secure=True, samesite="strict",
+        max_age=TOKEN_HOURS * 3600, path="/",
+    )
+    return resp
 
 
 @app.post("/api/auth/mfa/setup")
@@ -952,9 +972,11 @@ def logout(
     db: Session = Depends(get_db),
     request: Request = None,
 ):
-    """Record the session termination event in the audit log."""
+    """Record the session termination event in the audit log and clear the auth cookie."""
     audit(db, current_user.id, "LOGOUT", "User", str(current_user.id), request=request)
-    return {"success": True}
+    resp = JSONResponse({"success": True})
+    resp.delete_cookie(key="mf_auth", path="/", httponly=True, secure=True, samesite="strict")
+    return resp
 
 
 @app.put("/api/auth/me/password")
@@ -1200,16 +1222,22 @@ def create_medication(patient_id: int, data: dict, db: Session = Depends(get_db)
 def update_medication(med_id: int, data: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     m = db.query(models.PatientMedication).filter(models.PatientMedication.id == med_id).first()
     if not m: raise HTTPException(status_code=404, detail="Not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == m.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     for k in ("name","dosage","frequency","route","start_date","end_date","prescriber","indication","is_active","notes"):
         if k in data: setattr(m, k, data[k])
     db.commit(); db.refresh(m)
+    audit(db, current_user.id, "UPDATE_MEDICATION", "PatientMedication", str(med_id))
     return m
 
 @app.delete("/api/medications/{med_id}")
 def delete_medication(med_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     m = db.query(models.PatientMedication).filter(models.PatientMedication.id == med_id).first()
     if not m: raise HTTPException(status_code=404, detail="Not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == m.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     db.delete(m); db.commit()
+    audit(db, current_user.id, "DELETE_MEDICATION", "PatientMedication", str(med_id))
     return {"ok": True}
 
 
@@ -1243,16 +1271,22 @@ def create_history_entry(patient_id: int, data: dict, db: Session = Depends(get_
 def update_history_entry(entry_id: int, data: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     e = db.query(models.PatientHistoryEntry).filter(models.PatientHistoryEntry.id == entry_id).first()
     if not e: raise HTTPException(status_code=404, detail="Not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == e.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     for k in ("entry_type","description","detail","onset_date","status","notes"):
         if k in data: setattr(e, k, data[k])
     db.commit(); db.refresh(e)
+    audit(db, current_user.id, "UPDATE_HISTORY_ENTRY", "PatientHistoryEntry", str(entry_id))
     return e
 
 @app.delete("/api/history/{entry_id}")
 def delete_history_entry(entry_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     e = db.query(models.PatientHistoryEntry).filter(models.PatientHistoryEntry.id == entry_id).first()
     if not e: raise HTTPException(status_code=404, detail="Not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == e.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     db.delete(e); db.commit()
+    audit(db, current_user.id, "DELETE_HISTORY_ENTRY", "PatientHistoryEntry", str(entry_id))
     return {"ok": True}
 
 
@@ -1268,6 +1302,8 @@ def list_notes(
 ):
     q = db.query(models.ClinicalNote)
     if patient_id:
+        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if patient: _require_patient_access(patient, current_user)
         q = q.filter(models.ClinicalNote.patient_id == patient_id)
         audit(db, current_user.id, "VIEW_NOTES", "Patient", str(patient_id))
     rows = q.order_by(models.ClinicalNote.created_at.desc()).all()
@@ -1317,6 +1353,8 @@ def update_note(
     note = db.query(models.ClinicalNote).filter(models.ClinicalNote.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == note.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     # HIPAA integrity control: signed notes are immutable
     # Only the status field may be changed on a signed note (e.g. to unsign for addendum)
     if note.status == "signed":
@@ -1351,6 +1389,8 @@ def delete_note(
     note = db.query(models.ClinicalNote).filter(models.ClinicalNote.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == note.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     db.delete(note)
     db.commit()
     audit(db, current_user.id, "DELETE_NOTE", "ClinicalNote", str(note_id))
@@ -1604,6 +1644,8 @@ def list_lab_orders(
 ):
     q = db.query(models.LabOrder)
     if patient_id:
+        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if patient: _require_patient_access(patient, current_user)
         q = q.filter(models.LabOrder.patient_id == patient_id)
         audit(db, current_user.id, "VIEW_LAB_ORDERS", "Patient", str(patient_id))
     return [clean(o) for o in q.order_by(models.LabOrder.created_at.desc()).all()]
@@ -2121,6 +2163,8 @@ def list_skin_lesions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     lesions = (db.query(models.SkinLesion)
                .filter(models.SkinLesion.patient_id == patient_id)
                .order_by(models.SkinLesion.created_at.desc()).all())
@@ -2136,6 +2180,10 @@ def create_skin_lesion(
     patient_id = body.get("patient_id")
     if not patient_id:
         raise HTTPException(status_code=400, detail="patient_id required")
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     lesion = models.SkinLesion(
         patient_id    = patient_id,
         created_by    = current_user.id,
@@ -2164,6 +2212,8 @@ def update_skin_lesion(
     lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
     if not lesion:
         raise HTTPException(status_code=404, detail="Lesion not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
     for field in ("name", "body_location", "description", "first_noted", "status", "notes"):
         if field in body:
             setattr(lesion, field, body[field])
@@ -2198,6 +2248,8 @@ async def upload_lesion_image(
     lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
     if not lesion:
         raise HTTPException(status_code=404, detail="Lesion not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
+    if patient: _require_patient_access(patient, current_user)
 
     content_type = request.headers.get("content-type", "")
     if "multipart" not in content_type:
@@ -2209,6 +2261,9 @@ async def upload_lesion_image(
         raise HTTPException(status_code=400, detail="image field required")
 
     raw = await image_file.read()
+    _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+    if len(raw) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large — maximum 10 MB")
     mime = getattr(image_file, "content_type", None) or "image/jpeg"
     if mime not in ("image/jpeg", "image/png", "image/webp", "image/gif"):
         mime = "image/jpeg"
@@ -5145,6 +5200,8 @@ def _migrate_add_billing_columns(db: Session):
 # ═════════════════════════════════════════════════════════════════════════════
 
 PORTAL_TOKEN_HOURS = 2  # Risk 11: reduced from 24h to 2h
+# HIPAA §164.312(a)(2)(iii): auto-logoff for patient portal after inactivity.
+PORTAL_IDLE_TIMEOUT_MINUTES = int(os.getenv("PORTAL_IDLE_TIMEOUT_MINUTES", "30"))
 
 def make_portal_token(patient_id: int) -> str:
     exp = datetime.utcnow() + timedelta(hours=PORTAL_TOKEN_HOURS)
@@ -5170,6 +5227,17 @@ def get_portal_patient(
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient or not patient.portal_active:
         raise credentials_exc
+    # ── Portal idle timeout ───────────────────────────────────────────────────
+    now = datetime.utcnow()
+    if PORTAL_IDLE_TIMEOUT_MINUTES > 0:
+        last_active = getattr(patient, "portal_last_active", None)
+        if last_active and (now - last_active).total_seconds() > PORTAL_IDLE_TIMEOUT_MINUTES * 60:
+            raise HTTPException(status_code=401, detail="Portal session expired due to inactivity")
+    # Throttle write to at most once per 60 s
+    last_active = getattr(patient, "portal_last_active", None)
+    if not last_active or (now - last_active).total_seconds() > 60:
+        patient.portal_last_active = now
+        db.commit()
     return patient
 
 
@@ -5326,6 +5394,7 @@ def portal_activate(
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     email = data.get("email", "").strip()
     password = data.get("password", "").strip()
     if not email or not password:
@@ -5355,6 +5424,7 @@ def portal_deactivate(
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     patient.portal_active = False
     db.commit()
     audit(db, current_user.id, "PORTAL_DEACTIVATE", "Patient", str(patient_id))
@@ -6130,6 +6200,9 @@ async def import_patient_records(
     if file and file.filename:
         filename = file.filename
         content = await file.read()
+        _MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB
+        if len(content) > _MAX_IMPORT_BYTES:
+            raise HTTPException(status_code=413, detail="File too large — maximum 50 MB")
         if file.filename.lower().endswith(".pdf"):
             source_type = "pdf"
             try:

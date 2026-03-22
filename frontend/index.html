@@ -6457,39 +6457,53 @@ const NAV=[
 ];
 
 function App(){
-  const [token,setToken]=useState(()=>localStorage.getItem('mf_token'));
-  const [user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('mf_user'));}catch{return null;}});
+  // Token is stored ONLY in memory (React state) — never in localStorage.
+  // The httpOnly cookie set by the backend on login is the durable credential;
+  // JS cannot read it, eliminating the XSS token-theft vector.
+  const [token,setToken]=useState(null);
+  const [user,setUser]=useState(()=>{try{return JSON.parse(sessionStorage.getItem('mf_user'));}catch{return null;}});
+  const [authChecked,setAuthChecked]=useState(false);
   const [page,setPage]=useState('dashboard');
   const [selectedPatient,setSelectedPatient]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const toast=useToast();
   const inactivityTimer=React.useRef(null);
 
-  // Risk 8: 15-minute inactivity timeout
+  // On mount: try to re-hydrate session from the httpOnly cookie via /api/auth/me.
+  // If the cookie is present and valid, we get the user back without ever touching localStorage.
+  useEffect(()=>{
+    fetch('/api/auth/me',{credentials:'include'})
+      .then(r=>r.ok?r.json():null)
+      .then(u=>{
+        if(u){setUser(u);sessionStorage.setItem('mf_user',JSON.stringify(u));}
+        setAuthChecked(true);
+      })
+      .catch(()=>setAuthChecked(true));
+  },[]);
+
+  // 15-minute client-side inactivity timeout (server also enforces 30 min)
   const INACTIVITY_MS=15*60*1000;
   const resetTimer=React.useCallback(()=>{
     if(inactivityTimer.current) clearTimeout(inactivityTimer.current);
     inactivityTimer.current=setTimeout(()=>{
-      // Clear session and force re-login
-      setToken(null);setUser(null);
-      localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');
+      setToken(null);setUser(null);sessionStorage.removeItem('mf_user');
       window.dispatchEvent(new CustomEvent('session-expired'));
     },INACTIVITY_MS);
   },[]);
 
   useEffect(()=>{
-    if(!token) return; // only run when logged in
+    if(!user) return;
     const events=['mousemove','mousedown','keydown','touchstart','scroll','click'];
     events.forEach(ev=>window.addEventListener(ev,resetTimer,{passive:true}));
-    resetTimer(); // start timer on login
+    resetTimer();
     return()=>{
       events.forEach(ev=>window.removeEventListener(ev,resetTimer));
       if(inactivityTimer.current) clearTimeout(inactivityTimer.current);
     };
-  },[token,resetTimer]);
+  },[user,resetTimer]);
 
   useEffect(()=>{
-    const h=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+    const h=()=>{setToken(null);setUser(null);sessionStorage.removeItem('mf_user');};
     window.addEventListener('auth-expired',h);
     window.addEventListener('session-expired',()=>{h();setTimeout(()=>toast&&toast('Session expired due to inactivity. Please log in again.','error'),100);});
     return()=>window.removeEventListener('auth-expired',h);
@@ -6508,20 +6522,18 @@ function App(){
   },[]);
 
   const login=(t,u)=>{
+    // Token kept in memory only; cookie is already set by the backend response.
     setToken(t);setUser(u);
-    localStorage.setItem('mf_token',t);
-    localStorage.setItem('mf_user',JSON.stringify(u));
+    sessionStorage.setItem('mf_user',JSON.stringify(u));
   };
   const logout=async()=>{
-    // Audit the session termination before clearing state
-    if(token){
-      try{ await api('POST','/api/auth/logout',{},token); }catch(e){}
-    }
-    setToken(null);setUser(null);
-    localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');
+    try{ await fetch('/api/auth/logout',{method:'POST',credentials:'include'}); }catch(e){}
+    setToken(null);setUser(null);sessionStorage.removeItem('mf_user');
   };
 
-  if(!token||!user) return <LoginPage onLogin={login}/>;
+  // Show blank screen while checking for existing session
+  if(!authChecked) return null;
+  if(!user) return <LoginPage onLogin={login}/>;
 
   const navigate=(id)=>{setPage(id);setSelectedPatient(null);setSidebarOpen(false);};
 
