@@ -18,6 +18,10 @@ Base.metadata.create_all(bind=engine)
 _migrations = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP",
+    # Reset stale last_active so the idle-timeout check doesn't fire on first login
+    # after a deploy. The login endpoint now sets this fresh, but clearing it here
+    # ensures any existing stale value doesn't block login on the very first request.
+    "UPDATE users SET last_active = NULL WHERE last_active < NOW() - INTERVAL '30 minutes'",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR DEFAULT ''",
