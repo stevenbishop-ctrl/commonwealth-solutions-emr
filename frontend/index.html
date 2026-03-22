@@ -114,7 +114,11 @@ const API = (window.location.protocol === 'file:' ||
 async function api(method,path,body,token){
   const headers={'Content-Type':'application/json'};
   if(token) headers['Authorization']=`Bearer ${token}`;
-  const opts={method,headers};
+  if(method!=='GET'){
+    const csrf=(document.cookie.split(';').map(c=>c.trim()).find(c=>c.startsWith('mf_csrf='))||'').split('=').slice(1).join('=');
+    if(csrf) headers['X-CSRF-Token']=csrf;
+  }
+  const opts={method,headers,credentials:'include'};
   if(body && method!=='GET') opts.body=JSON.stringify(body);
   const r=await fetch(API+path,opts);
   if(r.status===401){window.dispatchEvent(new Event('auth-expired'));return null;}

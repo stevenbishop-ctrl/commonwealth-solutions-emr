@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -544,6 +545,34 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# ── CSRF Protection Middleware (double-submit cookie pattern) ─────────────────
+# State-changing requests must include an X-CSRF-Token header that matches the
+# mf_csrf non-httpOnly cookie set at login.  SameSite=Strict on the auth cookie
+# already blocks cross-site attacks in modern browsers; this is defense-in-depth.
+_CSRF_EXEMPT_PREFIXES = ("/api/auth/login", "/api/auth/mfa/verify", "/portal/login",
+                         "/health", "/api/zaprite/webhook", "/api/telnyx/",
+                         "/api/sms/", "/api/public/", "/api/fax-pdf/")
+
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return await call_next(request)
+        path = request.url.path
+        if any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIXES):
+            return await call_next(request)
+        csrf_cookie = request.cookies.get("mf_csrf", "")
+        csrf_header = request.headers.get("X-CSRF-Token", "")
+        if not csrf_cookie or not csrf_header:
+            from fastapi.responses import JSONResponse as _JR
+            return _JR({"detail": "CSRF token missing"}, status_code=403)
+        if not hmac.compare_digest(csrf_cookie, csrf_header):
+            from fastapi.responses import JSONResponse as _JR
+            return _JR({"detail": "CSRF validation failed"}, status_code=403)
+        return await call_next(request)
+
+app.add_middleware(CSRFMiddleware)
+
+
 # ── HTTPS Enforcement Middleware ──────────────────────────────────────────────
 class HTTPSRedirectMiddleware(BaseHTTPMiddleware):
     """Redirect HTTP → HTTPS in production. Exempts internal/healthcheck traffic."""
@@ -601,6 +630,66 @@ def _record_failure(ip: str):
 def _clear_failures(ip: str):
     with _rl_lock:
         _failed_attempts[ip] = []
+
+
+# ── Upload rate limiter ────────────────────────────────────────────────────────
+_upload_lock = threading.Lock()
+_upload_attempts: dict = collections.defaultdict(list)  # user_id -> [timestamps]
+UPLOAD_RATE_LIMIT = 10   # max uploads per user per minute
+UPLOAD_RATE_WINDOW = 60
+
+def _check_upload_rate_limit(user_id: int):
+    now = time.time()
+    with _upload_lock:
+        _upload_attempts[user_id] = [t for t in _upload_attempts[user_id] if now - t < UPLOAD_RATE_WINDOW]
+        if len(_upload_attempts[user_id]) >= UPLOAD_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Upload rate limit exceeded — max 10 per minute")
+        _upload_attempts[user_id].append(now)
+
+
+# ── SMS rate limiter ───────────────────────────────────────────────────────────
+_sms_rl_lock = threading.Lock()
+_sms_attempts: dict = collections.defaultdict(list)  # patient_id -> [timestamps]
+SMS_RATE_LIMIT = 10   # max outbound SMS per patient per hour
+SMS_RATE_WINDOW = 3600
+
+def _check_sms_rate_limit(patient_id: int):
+    now = time.time()
+    with _sms_rl_lock:
+        _sms_attempts[patient_id] = [t for t in _sms_attempts[patient_id] if now - t < SMS_RATE_WINDOW]
+        if len(_sms_attempts[patient_id]) >= SMS_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="SMS rate limit exceeded for this patient — max 10/hour")
+        _sms_attempts[patient_id].append(now)
+
+
+# ── Enrollment rate limiter ────────────────────────────────────────────────────
+_enroll_lock = threading.Lock()
+_enrollment_attempts: dict = collections.defaultdict(list)  # ip -> [timestamps]
+ENROLL_RATE_LIMIT = 5    # max submissions per IP per hour
+ENROLL_RATE_WINDOW = 3600
+
+def _check_enrollment_rate_limit(ip: str):
+    now = time.time()
+    with _enroll_lock:
+        _enrollment_attempts[ip] = [t for t in _enrollment_attempts[ip] if now - t < ENROLL_RATE_WINDOW]
+        if len(_enrollment_attempts[ip]) >= ENROLL_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Too many enrollment submissions — please wait before trying again")
+        _enrollment_attempts[ip].append(now)
+
+
+# ── Password reset rate limiter ────────────────────────────────────────────────
+_reset_rl_lock = threading.Lock()
+_reset_attempts: dict = collections.defaultdict(list)  # user_id -> [timestamps]
+RESET_RATE_LIMIT = 3     # max reset attempts per user per 5 minutes
+RESET_RATE_WINDOW = 300
+
+def _check_reset_rate_limit(user_id: int):
+    now = time.time()
+    with _reset_rl_lock:
+        _reset_attempts[user_id] = [t for t in _reset_attempts[user_id] if now - t < RESET_RATE_WINDOW]
+        if len(_reset_attempts[user_id]) >= RESET_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Too many password reset attempts — please wait 5 minutes")
+        _reset_attempts[user_id].append(now)
 
 
 # ── Suspicious Access Detection (HIPAA §164.308(a)(1)) ───────────────────────
@@ -876,10 +965,16 @@ def login(
     tv = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
+    csrf_token = secrets.token_hex(32)
     resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
     resp.set_cookie(
         key="mf_auth", value=token,
         httponly=True, secure=True, samesite="strict",
+        max_age=TOKEN_HOURS * 3600, path="/",
+    )
+    resp.set_cookie(
+        key="mf_csrf", value=csrf_token,
+        httponly=False, secure=True, samesite="strict",
         max_age=TOKEN_HOURS * 3600, path="/",
     )
     return resp
@@ -906,10 +1001,16 @@ def mfa_verify(data: dict, request: Request = None, db: Session = Depends(get_db
     tv2 = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv2)
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
+    csrf_token = secrets.token_hex(32)
     resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
     resp.set_cookie(
         key="mf_auth", value=token,
         httponly=True, secure=True, samesite="strict",
+        max_age=TOKEN_HOURS * 3600, path="/",
+    )
+    resp.set_cookie(
+        key="mf_csrf", value=csrf_token,
+        httponly=False, secure=True, samesite="strict",
         max_age=TOKEN_HOURS * 3600, path="/",
     )
     return resp
@@ -972,10 +1073,11 @@ def logout(
     db: Session = Depends(get_db),
     request: Request = None,
 ):
-    """Record the session termination event in the audit log and clear the auth cookie."""
+    """Record the session termination event in the audit log and clear the auth cookies."""
     audit(db, current_user.id, "LOGOUT", "User", str(current_user.id), request=request)
     resp = JSONResponse({"success": True})
-    resp.delete_cookie(key="mf_auth", path="/", httponly=True, secure=True, samesite="strict")
+    resp.delete_cookie(key="mf_auth",  path="/", httponly=True,  secure=True, samesite="strict")
+    resp.delete_cookie(key="mf_csrf",  path="/", httponly=False, secure=True, samesite="strict")
     return resp
 
 
@@ -1017,6 +1119,7 @@ def reset_expired_password(
         user_id = int(payload["sub"])
     except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid or expired reset token")
+    _check_reset_rate_limit(user_id)
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="Invalid reset token")
@@ -1030,7 +1133,11 @@ def reset_expired_password(
     audit(db, user.id, "PASSWORD_RESET_EXPIRED", "User", str(user.id), request=request)
     tv3 = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv3)
-    return {"access_token": token, "token_type": "bearer", "user": user_dict(user)}
+    csrf_token = secrets.token_hex(32)
+    resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
+    resp.set_cookie("mf_auth", token, httponly=True, secure=True, samesite="strict", max_age=TOKEN_HOURS*3600, path="/")
+    resp.set_cookie("mf_csrf", csrf_token, httponly=False, secure=True, samesite="strict", max_age=TOKEN_HOURS*3600, path="/")
+    return resp
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1194,6 +1301,9 @@ def update_patient(
 
 @app.get("/api/patients/{patient_id}/medications")
 def list_medications(patient_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     audit(db, current_user.id, "VIEW_MEDICATIONS", "Patient", str(patient_id))
     return db.query(models.PatientMedication).filter(
         models.PatientMedication.patient_id == patient_id
@@ -1201,6 +1311,9 @@ def list_medications(patient_id: int, db: Session = Depends(get_db), current_use
 
 @app.post("/api/patients/{patient_id}/medications")
 def create_medication(patient_id: int, data: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     m = models.PatientMedication(
         patient_id=patient_id,
         name=data.get("name","").strip(),
@@ -1245,8 +1358,13 @@ def delete_medication(med_id: int, db: Session = Depends(get_db), current_user: 
 # MEDICAL HISTORY
 # ═════════════════════════════════════════════════════════════════════════════
 
+_VALID_ENTRY_TYPES = {"problem", "allergy", "surgical", "family", "social", "immunization", "other"}
+
 @app.get("/api/patients/{patient_id}/history")
 def list_history(patient_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
     audit(db, current_user.id, "VIEW_HISTORY", "Patient", str(patient_id))
     return db.query(models.PatientHistoryEntry).filter(
         models.PatientHistoryEntry.patient_id == patient_id
@@ -1254,9 +1372,15 @@ def list_history(patient_id: int, db: Session = Depends(get_db), current_user: m
 
 @app.post("/api/patients/{patient_id}/history")
 def create_history_entry(patient_id: int, data: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
+    entry_type = data.get("entry_type", "problem")
+    if entry_type not in _VALID_ENTRY_TYPES:
+        raise HTTPException(status_code=400, detail=f"entry_type must be one of: {', '.join(sorted(_VALID_ENTRY_TYPES))}")
     e = models.PatientHistoryEntry(
         patient_id=patient_id,
-        entry_type=data.get("entry_type","problem"),
+        entry_type=entry_type,
         description=data.get("description","").strip(),
         detail=data.get("detail",""),
         onset_date=data.get("onset_date",""),
@@ -1316,6 +1440,9 @@ def create_note(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _note_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _note_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_note_patient, current_user)
     visit = data.get("visit_date")
     note = models.ClinicalNote(
         patient_id=data["patient_id"],
@@ -1526,11 +1653,19 @@ async def ai_generate(
     patient_id = data.get("patient_id")
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt is required")
+    if len(prompt) > 2000:
+        raise HTTPException(status_code=400, detail="Prompt too long — maximum 2000 characters")
+    # Reject obvious prompt-injection attempts
+    _injection_patterns = ["ignore previous", "ignore all", "disregard", "forget instructions",
+                           "system prompt", "jailbreak", "bypass", "override instructions"]
+    if any(pat in prompt.lower() for pat in _injection_patterns):
+        raise HTTPException(status_code=400, detail="Prompt content not allowed")
 
     patient_ctx = ""
     if patient_id:
         p = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
         if p:
+            _require_patient_access(p, current_user)
             patient_ctx = (
                 f"Patient: {p.first_name} {p.last_name}, DOB: {p.dob}, "
                 f"Gender: {p.gender}, Insurance: {p.insurance_name}"
@@ -1657,6 +1792,12 @@ def create_lab_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _lab_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _lab_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_lab_patient, current_user)
+    _VALID_PRIORITIES = {"routine", "stat", "asap"}
+    if data.get("priority", "routine") not in _VALID_PRIORITIES:
+        raise HTTPException(status_code=400, detail=f"priority must be one of: {', '.join(_VALID_PRIORITIES)}")
     # test_objects is the rich picker payload: [{name, code, category, specimen}, ...]
     test_objects_raw = data.get("test_objects")  # already a JSON string from picker
     tests_display = data.get("tests", [])
@@ -2250,6 +2391,7 @@ async def upload_lesion_image(
         raise HTTPException(status_code=404, detail="Lesion not found")
     patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
     if patient: _require_patient_access(patient, current_user)
+    _check_upload_rate_limit(current_user.id)
 
     content_type = request.headers.get("content-type", "")
     if "multipart" not in content_type:
@@ -2584,6 +2726,8 @@ def list_imaging_orders(
 ):
     q = db.query(models.ImagingOrder)
     if patient_id:
+        _img_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if _img_patient: _require_patient_access(_img_patient, current_user)
         q = q.filter(models.ImagingOrder.patient_id == patient_id)
         audit(db, current_user.id, "VIEW_IMAGING_ORDERS", "Patient", str(patient_id))
     return [clean(o) for o in q.order_by(models.ImagingOrder.created_at.desc()).all()]
@@ -2630,6 +2774,11 @@ async def create_imaging_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _io_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _io_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_io_patient, current_user)
+    if data.get("priority", "routine") not in {"routine", "stat", "asap"}:
+        raise HTTPException(status_code=400, detail="priority must be one of: routine, stat, asap")
     order = models.ImagingOrder(
         patient_id=data["patient_id"],
         physician_id=current_user.id,
@@ -3586,12 +3735,18 @@ def list_appointments(
     if start:       q = q.filter(models.Appointment.start_time >= _dt.fromisoformat(start))
     if end:         q = q.filter(models.Appointment.start_time <= _dt.fromisoformat(end))
     if provider_id: q = q.filter(models.Appointment.provider_id == provider_id)
-    if patient_id:  q = q.filter(models.Appointment.patient_id == patient_id)
+    if patient_id:
+        _appt_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+        if _appt_patient: _require_patient_access(_appt_patient, current_user)
+        q = q.filter(models.Appointment.patient_id == patient_id)
     return [_enrich_appointment(a, db) for a in q.order_by(models.Appointment.start_time).all()]
 
 @app.post("/api/appointments")
 def create_appointment(data: dict, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     from datetime import datetime as _dt
+    if data.get("patient_id"):
+        _ca_patient = db.query(models.Patient).filter(models.Patient.id == data["patient_id"]).first()
+        if _ca_patient: _require_patient_access(_ca_patient, current_user)
     a = models.Appointment(
         patient_id=data.get("patient_id"),
         provider_id=data["provider_id"],
@@ -4406,6 +4561,9 @@ def list_prescriptions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _rx_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not _rx_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_rx_patient, current_user)
     audit(db, current_user.id, "VIEW_PRESCRIPTIONS", "Patient", str(patient_id))
     rxs = (db.query(models.Prescription)
            .filter(models.Prescription.patient_id == patient_id)
@@ -4420,6 +4578,9 @@ def create_prescription(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    _crx_patient = db.query(models.Patient).filter(models.Patient.id == data.get("patient_id")).first()
+    if not _crx_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_crx_patient, current_user)
     drug_name = data.get("drug_name","").strip()
     if not drug_name:
         raise HTTPException(status_code=422, detail="drug_name is required")
@@ -6191,6 +6352,7 @@ async def import_patient_records(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     _require_patient_access(patient, current_user)
+    _check_upload_rate_limit(current_user.id)
 
     # ── Extract raw text ─────────────────────────────────────────────────────
     source_type = "text"
@@ -6432,6 +6594,7 @@ def send_message_to_patient(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     _require_patient_access(patient, current_user)
+    _check_sms_rate_limit(patient_id)
 
     body = (data.get("body") or "").strip()
     if not body:
@@ -7029,6 +7192,7 @@ async def public_enroll(data: dict, request: Request, db: Session = Depends(get_
     """
     ip   = request.client.host if request.client else ""
     ua   = request.headers.get("user-agent", "")
+    _check_enrollment_rate_limit(ip)
     token = str(_uuid.uuid4())
 
     # Resolve plan
