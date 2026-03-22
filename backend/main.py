@@ -2497,6 +2497,11 @@ def delete_lesion_image(
     img = db.query(models.LesionImage).filter(models.LesionImage.id == image_id).first()
     if not img:
         raise HTTPException(status_code=404, detail="Image not found")
+    _del_img_lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == img.lesion_id).first()
+    if _del_img_lesion:
+        _del_img_patient = db.query(models.Patient).filter(models.Patient.id == _del_img_lesion.patient_id).first()
+        if not _del_img_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_del_img_patient, current_user)
     db.delete(img)
     db.commit()
     audit(db, current_user.id, "DELETE_LESION_IMAGE", "LesionImage", str(image_id), "")
@@ -2524,6 +2529,9 @@ async def analyze_lesion(
     lesion = db.query(models.SkinLesion).filter(models.SkinLesion.id == lesion_id).first()
     if not lesion:
         raise HTTPException(status_code=404, detail="Lesion not found")
+    _analyze_patient = db.query(models.Patient).filter(models.Patient.id == lesion.patient_id).first()
+    if not _analyze_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_analyze_patient, current_user)
 
     images = (db.query(models.LesionImage)
               .filter(models.LesionImage.lesion_id == lesion_id)
@@ -2783,7 +2791,8 @@ def list_imaging_orders(
     q = db.query(models.ImagingOrder)
     if patient_id:
         _img_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-        if _img_patient: _require_patient_access(_img_patient, current_user)
+        if not _img_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_img_patient, current_user)
         q = q.filter(models.ImagingOrder.patient_id == patient_id)
         audit(db, current_user.id, "VIEW_IMAGING_ORDERS", "Patient", str(patient_id))
     return [clean(o) for o in q.order_by(models.ImagingOrder.created_at.desc()).all()]
@@ -3809,7 +3818,8 @@ def list_appointments(
     if provider_id: q = q.filter(models.Appointment.provider_id == provider_id)
     if patient_id:
         _appt_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-        if _appt_patient: _require_patient_access(_appt_patient, current_user)
+        if not _appt_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_appt_patient, current_user)
         q = q.filter(models.Appointment.patient_id == patient_id)
     return [_enrich_appointment(a, db) for a in q.order_by(models.Appointment.start_time).all()]
 
@@ -3818,7 +3828,8 @@ def create_appointment(data: dict, db: Session = Depends(get_db), current_user: 
     from datetime import datetime as _dt
     if data.get("patient_id"):
         _ca_patient = db.query(models.Patient).filter(models.Patient.id == data["patient_id"]).first()
-        if _ca_patient: _require_patient_access(_ca_patient, current_user)
+        if not _ca_patient: raise HTTPException(status_code=404, detail="Patient not found")
+        _require_patient_access(_ca_patient, current_user)
     a = models.Appointment(
         patient_id=data.get("patient_id"),
         provider_id=data["provider_id"],
@@ -5251,6 +5262,9 @@ def get_prescription_fax_status(
     rx = db.query(models.Prescription).filter(models.Prescription.id == rx_id).first()
     if not rx:
         raise HTTPException(status_code=404, detail="Not found")
+    _fax_stat_rx_patient = db.query(models.Patient).filter(models.Patient.id == rx.patient_id).first()
+    if not _fax_stat_rx_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_fax_stat_rx_patient, current_user)
     if not rx.fax_id:
         return {"fax_status": None, "message": "No fax sent for this prescription"}
     if not _telnyx_configured():
@@ -5703,6 +5717,9 @@ def toggle_note_visibility(
     note = db.query(models.ClinicalNote).filter(models.ClinicalNote.id == note_id).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
+    _vis_patient = db.query(models.Patient).filter(models.Patient.id == note.patient_id).first()
+    if not _vis_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_vis_patient, current_user)
     note.patient_visible = bool(data.get("patient_visible", False))
     db.commit()
     audit(db, current_user.id, "TOGGLE_NOTE_VISIBILITY", "ClinicalNote", str(note_id))
@@ -5827,8 +5844,11 @@ def export_patient_records(
     """
     if current_user.role not in ("admin", "physician"):
         raise HTTPException(status_code=403, detail="Physician or admin required")
+    _export_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not _export_patient: raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(_export_patient, current_user)
     data = _build_patient_export(patient_id, db)
-    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    patient = _export_patient
     fname = f"{patient.last_name}_{patient.first_name}_records_{datetime.utcnow().strftime('%Y%m%d')}.json"
     audit(db, current_user.id, "EXPORT_PATIENT_RECORDS", "Patient", str(patient_id),
           details="HIPAA Right of Access export")
@@ -6950,6 +6970,7 @@ def update_communication_consent(
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
+    _require_patient_access(patient, current_user)
 
     now = datetime.utcnow()
     changed = []
