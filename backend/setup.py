@@ -19,6 +19,7 @@ _migrations = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS user_agent VARCHAR DEFAULT ''",
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS portal_last_active TIMESTAMP",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS telnyx_sms_number VARCHAR DEFAULT ''",
