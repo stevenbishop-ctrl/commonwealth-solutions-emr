@@ -2063,9 +2063,11 @@ async def labcorp_webhook(request: Request, db: Session = Depends(get_db)):
     Configure your LabCorp account to POST to: https://<your-domain>/api/labcorp/webhook
     Set LABCORP_WEBHOOK_SECRET to validate the X-LabCorp-Signature header.
     """
-    # Validate signature if secret is configured
+    # Validate signature — reject unsigned requests when secret is configured
     if LABCORP_WEBHOOK_SECRET:
         sig = request.headers.get("X-LabCorp-Signature", "")
+        if not sig:
+            raise HTTPException(status_code=401, detail="Missing webhook signature")
         if sig != LABCORP_WEBHOOK_SECRET:
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
@@ -3752,7 +3754,9 @@ async def square_webhook(request: Request, db: Session = Depends(get_db)):
     sig_header  = request.headers.get("x-square-hmacsha256-signature", "")
     webhook_key = os.getenv("SQUARE_WEBHOOK_SIGNATURE_KEY", "")
 
-    if webhook_key and sig_header:
+    if webhook_key:
+        if not sig_header:
+            raise HTTPException(status_code=400, detail="Missing Square webhook signature")
         url = str(request.url)
         expected_sig = base64.b64encode(
             _hmac.new(webhook_key.encode(), (url + payload.decode()).encode(), _hashlib.sha256).digest()
@@ -4131,6 +4135,8 @@ async def zaprite_webhook(request: Request, db: Session = Depends(get_db)):
     zaprite_secret = os.getenv("ZAPRITE_WEBHOOK_SECRET", "")
     if zaprite_secret:
         sig_header = request.headers.get("X-Zaprite-Signature", "")
+        if not sig_header:
+            raise HTTPException(status_code=403, detail="Missing webhook signature")
         expected   = hmac.new(
             zaprite_secret.encode("utf-8"), raw_body, hashlib.sha256
         ).hexdigest()
@@ -7114,7 +7120,17 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     # ── Signature verification ────────────────────────────────────────────────
     timestamp  = request.headers.get("telnyx-timestamp", "")
     signature  = request.headers.get("telnyx-signature-ed25519", "")
-    if timestamp and signature:
+    telnyx_pubkey = os.getenv("TELNYX_PUBLIC_KEY", "")
+    if telnyx_pubkey:
+        # Public key is configured — require and verify signature
+        if not timestamp or not signature:
+            raise HTTPException(status_code=403, detail="Missing Telnyx webhook signature")
+        if not _verify_telnyx_sms_signature(raw_body, timestamp, signature):
+            audit(db, None, "SMS_WEBHOOK_SIGNATURE_FAIL", "Webhook", "telnyx_sms",
+                  details=f"Invalid signature from {request.client.host if request.client else 'unknown'}")
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+    elif timestamp and signature:
+        # No public key configured but headers present — attempt best-effort verification
         if not _verify_telnyx_sms_signature(raw_body, timestamp, signature):
             audit(db, None, "SMS_WEBHOOK_SIGNATURE_FAIL", "Webhook", "telnyx_sms",
                   details=f"Invalid signature from {request.client.host if request.client else 'unknown'}")
@@ -7603,6 +7619,8 @@ def list_enrollments(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     q = db.query(models.EnrollmentApplication)
     if status:
         q = q.filter(models.EnrollmentApplication.status == status)
@@ -7630,6 +7648,8 @@ def approve_enrollment(
     current_user: models.User = Depends(get_current_user),
 ):
     """Approve an enrollment and create a Patient record from it."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     enroll = db.query(models.EnrollmentApplication).filter(
         models.EnrollmentApplication.id == eid
     ).first()
@@ -7718,6 +7738,8 @@ def reject_enrollment(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     enroll = db.query(models.EnrollmentApplication).filter(
         models.EnrollmentApplication.id == eid
     ).first()
