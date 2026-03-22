@@ -340,6 +340,13 @@ class Prescription(Base):
     created_at       = Column(DateTime, default=datetime.utcnow)
     updated_at       = Column(DateTime, default=datetime.utcnow)
 
+    # 503A Compounding fields (added for Commonwealth Solutions telehealth platform)
+    is_compounded           = Column(Boolean, default=False)      # True for 503A compound orders
+    compounding_clinic_necessity = Column(Text, default="")       # Clinical necessity documentation (required)
+    compounding_reason_allergy   = Column(Boolean, default=False) # Allergy to commercial product
+    compounding_reason_unavailable = Column(Boolean, default=False) # Commercial product unavailable
+    compounding_reason_dose      = Column(Boolean, default=False) # Required dose not commercially available
+
 
 class SavedPharmacy(Base):
     """Pharmacies saved by the practice for quick selection."""
