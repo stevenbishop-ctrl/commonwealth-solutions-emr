@@ -11,6 +11,7 @@ Run:
 import base64
 import collections
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -491,13 +492,24 @@ import models
 # prevents uvicorn from binding to the port before the healthcheck timeout.
 app = FastAPI(title="MedFlow EMR", version="1.0.0", docs_url="/api/docs")
 
-_origins_raw = os.getenv("ALLOWED_ORIGINS", "*")
-_origins = [o.strip() for o in _origins_raw.split(",")] if _origins_raw != "*" else ["*"]
+# CORS: credentials (cookies/Authorization header) must never be combined with a
+# wildcard origin — browsers reject it and it's a HIPAA data-leakage risk.
+# Set ALLOWED_ORIGINS to a comma-separated list of explicit origins in production
+# (e.g. "https://app.medflow.com,https://portal.medflow.com").
+# When no explicit list is provided we still allow * but disable credentials so
+# public health-check/static routes continue to work.
+_origins_raw = os.getenv("ALLOWED_ORIGINS", "")
+if _origins_raw:
+    _origins            = [o.strip() for o in _origins_raw.split(",") if o.strip()]
+    _allow_credentials  = True
+else:
+    _origins            = ["*"]
+    _allow_credentials  = False  # wildcard + credentials is forbidden by the CORS spec
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_credentials=True,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -666,6 +678,9 @@ if not SECRET_KEY or SECRET_KEY == "CHANGE_ME_IN_PRODUCTION_USE_RANDOM_256BIT":
     )
 ALGORITHM = "HS256"
 TOKEN_HOURS = int(os.getenv("TOKEN_EXPIRE_HOURS", "8"))
+# HIPAA §164.312(a)(2)(iii): automatic logoff after inactivity.
+# Set IDLE_TIMEOUT_MINUTES=0 to disable server-side idle enforcement.
+IDLE_TIMEOUT_MINUTES = int(os.getenv("IDLE_TIMEOUT_MINUTES", "30"))
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 # ── DB dependency ─────────────────────────────────────────────────────────────
@@ -711,6 +726,21 @@ def get_current_user(
     current_tv = getattr(user, "token_version", 0) or 0
     if token_version != current_tv:
         raise HTTPException(status_code=401, detail="Session invalidated — please log in again")
+    # ── Idle session timeout (HIPAA §164.312(a)(2)(iii)) ────────────────────────
+    now = datetime.utcnow()
+    if IDLE_TIMEOUT_MINUTES > 0:
+        last_active = getattr(user, "last_active", None)
+        if last_active and (now - last_active).total_seconds() > IDLE_TIMEOUT_MINUTES * 60:
+            raise HTTPException(
+                status_code=401,
+                detail="Session expired due to inactivity — please log in again"
+            )
+    # Throttle last_active writes to at most once per 60 s to avoid per-request DB overhead
+    last_active = getattr(user, "last_active", None)
+    if not last_active or (now - last_active).total_seconds() > 60:
+        user.last_active = now
+        db.commit()
+
     # Enforce MFA for privileged roles when REQUIRE_MFA env var is set
     if os.getenv("REQUIRE_MFA", "false").lower() == "true":
         if user.role in ("admin", "physician") and not getattr(user, "mfa_enabled", False):
@@ -3749,9 +3779,24 @@ async def zaprite_webhook(request: Request, db: Session = Depends(get_db)):
     Zaprite webhook endpoint for order.change events.
     In app.zaprite.com → Settings → API → Webhooks → add:
       URL: https://your-railway-app.railway.app/api/zaprite/webhook
+    Set ZAPRITE_WEBHOOK_SECRET env var to the secret shown in Zaprite's webhook settings.
     """
+    raw_body = await request.body()
+
+    # ── HMAC-SHA256 signature verification ──────────────────────────────────────
+    # Zaprite signs each webhook with HMAC-SHA256(secret, raw_body) sent in
+    # the X-Zaprite-Signature header as a hex digest.
+    zaprite_secret = os.getenv("ZAPRITE_WEBHOOK_SECRET", "")
+    if zaprite_secret:
+        sig_header = request.headers.get("X-Zaprite-Signature", "")
+        expected   = hmac.new(
+            zaprite_secret.encode("utf-8"), raw_body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig_header, expected):
+            raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
     try:
-        event = await request.json()
+        event = json.loads(raw_body)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
@@ -5292,6 +5337,7 @@ def portal_activate(
     ).first()
     if conflict:
         raise HTTPException(status_code=409, detail="That email is already used by another patient")
+    _validate_password(password)
     patient.portal_email = email
     patient.portal_password_hash = hash_pw(password)
     patient.portal_active = True

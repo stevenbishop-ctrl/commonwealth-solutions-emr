@@ -17,6 +17,7 @@ Base.metadata.create_all(bind=engine)
 # ── Schema migrations (safe to run on every deploy) ─────────────────────────
 _migrations = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_required BOOLEAN DEFAULT FALSE",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS telnyx_sms_number VARCHAR DEFAULT ''",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS cell_phone VARCHAR DEFAULT ''",

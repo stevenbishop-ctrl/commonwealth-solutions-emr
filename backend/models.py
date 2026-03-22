@@ -19,6 +19,7 @@ class User(Base):
     mfa_required = Column(Boolean, default=False)  # Force MFA before clinical access
     password_changed_at = Column(DateTime, nullable=True)
     token_version = Column(Integer, default=0)      # Invalidates all prior tokens on pw change
+    last_active   = Column(DateTime, nullable=True) # Updated on each authenticated request; drives idle timeout
     # Per-provider SMS routing
     telnyx_sms_number = Column(String, default="")  # Telnyx number patients text for this provider (E.164)
     cell_phone        = Column(String, default="")  # Provider's personal cell — messages forward here
