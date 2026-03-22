@@ -16,7 +16,7 @@ if DATABASE_URL.startswith("postgres://"):
 if "sqlite" in DATABASE_URL:
     _connect_args = {"check_same_thread": False}
 else:
-    _ssl_mode     = os.getenv("DB_SSL_MODE", "prefer")
+    _ssl_mode     = os.getenv("DB_SSL_MODE", "require")
     _connect_args = {"sslmode": _ssl_mode}
 
 engine = create_engine(
