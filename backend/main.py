@@ -967,6 +967,10 @@ def login(
         return {"password_expired": True, "reset_token": _make_pw_expired_token(user.id)}
     tv = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv)
+    # Reset last_active on login so the idle-timeout check in get_current_user
+    # doesn't immediately expire a session whose last_active is from a prior session.
+    user.last_active = datetime.utcnow()
+    db.commit()
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     csrf_token = secrets.token_hex(32)
     resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
@@ -1003,6 +1007,8 @@ def mfa_verify(data: dict, request: Request = None, db: Session = Depends(get_db
         raise HTTPException(status_code=401, detail="Invalid authenticator code")
     tv2 = getattr(user, "token_version", 0) or 0
     token = make_token(user.id, user.role, tv2)
+    user.last_active = datetime.utcnow()
+    db.commit()
     audit(db, user.id, "LOGIN", "User", str(user.id), request=request)
     csrf_token = secrets.token_hex(32)
     resp = JSONResponse({"access_token": token, "token_type": "bearer", "user": user_dict(user)})
