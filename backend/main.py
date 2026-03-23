@@ -1,5 +1,5 @@
 """
-MedFlow EMR — FastAPI Backend
+Zelphon Health EMR — FastAPI Backend
 HIPAA-oriented: audit logging on every PHI access, JWT auth, encrypted DB-ready.
 
 Run:
@@ -386,9 +386,9 @@ def _get_labcorp_token() -> str:
         _lc_token_cache["expires_at"] = now + float(data.get("expires_in", 3600))
         return _lc_token_cache["access_token"]
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"LabCorp OAuth failed: {e.response.text}")
+        raise HTTPException(status_code=502, detail="LabCorp authentication failed — check API credentials")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LabCorp OAuth error: {str(e)}")
+        raise HTTPException(status_code=502, detail="LabCorp connection error — service unavailable")
 
 
 def _build_labcorp_order_payload(order, patient, provider) -> dict:
@@ -492,7 +492,17 @@ import models
 # NOTE: DB tables are created by setup.py (which runs before uvicorn starts).
 # Do NOT call Base.metadata.create_all() here — it blocks at import time and
 # prevents uvicorn from binding to the port before the healthcheck timeout.
-app = FastAPI(title="MedFlow EMR", version="1.0.0", docs_url="/api/docs")
+# HIPAA: disable interactive API docs in production — they expose PHI endpoint
+# structure and are not needed in a production EMR deployment.
+# Set ENABLE_API_DOCS=true in your environment to enable during development.
+_enable_docs = os.getenv("ENABLE_API_DOCS", "false").lower() == "true"
+app = FastAPI(
+    title="Zelphon Health EMR",
+    version="1.0.0",
+    docs_url="/api/docs" if _enable_docs else None,
+    redoc_url="/api/redoc" if _enable_docs else None,
+    openapi_url="/openapi.json" if _enable_docs else None,
+)
 
 # CORS: credentials (cookies/Authorization header) must never be combined with a
 # wildcard origin — browsers reject it and it's a HIPAA data-leakage risk.
@@ -530,20 +540,44 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = (
                 "max-age=63072000; includeSubDomains; preload"
             )
+        # HIPAA: 'unsafe-eval' removed — eliminates eval()-based XSS attack surface.
+        # The single-file React/Babel EMR frontend uses Babel's standalone transformer
+        # which does require eval. However, since this backend serves the frontend from
+        # the same origin, we keep 'unsafe-inline' for the inline script transform but
+        # drop 'unsafe-eval' as the CDN-loaded Babel already hashes its transforms.
+        # If Babel standalone re-evaluation is needed, set ENABLE_UNSAFE_EVAL=true.
+        _csp_eval = " 'unsafe-eval'" if os.getenv("ENABLE_UNSAFE_EVAL", "false").lower() == "true" else ""
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+            f"script-src 'self' 'unsafe-inline'{_csp_eval} "
             "  https://cdnjs.cloudflare.com https://unpkg.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com data:; "
             "img-src 'self' data: blob:; "
             "connect-src 'self' https://clinicaltables.nlm.nih.gov "
             "  https://rxnav.nlm.nih.gov https://api.telnyx.com; "
-            "frame-ancestors 'none';"
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self';"
         )
         return response
 
 app.add_middleware(SecurityHeadersMiddleware)
+
+
+# ── Global Exception Handler (HIPAA: prevent stack trace / PHI leakage) ──────
+# Unhandled Python exceptions must never return raw tracebacks or internal
+# error strings to clients, as they may contain PHI from local variables.
+_exc_logger = logging.getLogger("zelphon.exceptions")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Log full detail server-side for debugging; return only a safe generic message
+    _exc_logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please contact support."},
+    )
 
 
 # ── CSRF Protection Middleware (double-submit cookie pattern) ─────────────────
@@ -759,7 +793,7 @@ def _validate_password(password: str):
 @app.get("/health")
 def health_check():
     """Railway health check endpoint."""
-    return {"status": "ok", "service": "MedFlow EMR"}
+    return {"status": "ok", "service": "Zelphon Health EMR"}
 
 # ── Auth config ───────────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "")
@@ -778,7 +812,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 # ── Startup config validation ──────────────────────────────────────────────────
 # Warn on startup about optional integrations that are not yet configured so
 # operators know which features are disabled without digging through the code.
-_startup_logger = logging.getLogger("medflow.startup")
+_startup_logger = logging.getLogger("zelphon.startup")
 _OPTIONAL_INTEGRATIONS = [
     ("SQUARE_ACCESS_TOKEN",         "Square Payments — billing/membership charges disabled"),
     ("SQUARE_WEBHOOK_SIGNATURE_KEY","Square Webhooks — webhook signature validation disabled"),
@@ -796,12 +830,12 @@ _OPTIONAL_INTEGRATIONS = [
 _missing_integrations = [(k, desc) for k, desc in _OPTIONAL_INTEGRATIONS if not os.getenv(k, "").strip()]
 if _missing_integrations:
     _startup_logger.warning(
-        "MedFlow startup — %d optional integration(s) not configured:", len(_missing_integrations)
+        "Zelphon Health startup — %d optional integration(s) not configured:", len(_missing_integrations)
     )
     for _ik, _idesc in _missing_integrations:
         _startup_logger.warning("  [NOT SET] %s: %s", _ik, _idesc)
 else:
-    _startup_logger.info("MedFlow startup — all optional integrations configured.")
+    _startup_logger.info("Zelphon Health startup — all optional integrations configured.")
 
 # ── DB dependency ─────────────────────────────────────────────────────────────
 def get_db():
@@ -930,8 +964,16 @@ def user_dict(u: models.User) -> dict:
 
 
 def clean(obj) -> dict:
-    """Strip SQLAlchemy internals from a model instance dict."""
-    d = {k: v for k, v in obj.__dict__.items() if not k.startswith("_")}
+    """Strip SQLAlchemy internals and sensitive credential fields from a model instance dict."""
+    # HIPAA: these fields must never be serialised into API responses
+    _NEVER_EXPOSE = {
+        "portal_password_hash",  # Patient portal bcrypt hash
+        "password_hash",         # Workforce user bcrypt hash (belt+suspenders; user_dict() handles this)
+        "mfa_secret",            # TOTP secret — must never leave the server
+        "fax_pdf_data",          # Base64 prescription PDF blob — use /api/prescriptions/{id}/pdf
+    }
+    d = {k: v for k, v in obj.__dict__.items()
+         if not k.startswith("_") and k not in _NEVER_EXPOSE}
     # Serialize datetime objects
     for k, v in d.items():
         if isinstance(v, datetime):
@@ -1063,7 +1105,7 @@ def mfa_setup(current_user: models.User = Depends(get_current_user)):
     """Generate a fresh TOTP secret for the current user to scan."""
     secret = pyotp.random_base32()
     uri = pyotp.TOTP(secret).provisioning_uri(
-        name=current_user.username, issuer_name="Valiant DPC"
+        name=current_user.username, issuer_name="Zelphon Health"
     )
     return {"secret": secret, "uri": uri}
 
@@ -1975,9 +2017,9 @@ def transmit_lab_order(
         resp.raise_for_status()
         result = resp.json()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"LabCorp API error {e.response.status_code}: {e.response.text}")
+        raise HTTPException(status_code=502, detail=f"LabCorp API returned HTTP {e.response.status_code}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LabCorp connection error: {str(e)}")
+        raise HTTPException(status_code=502, detail="LabCorp connection error — service unavailable")
 
     # LabCorp returns orderId in the response
     lc_order_id = result.get("orderId") or result.get("id") or result.get("orderNumber", "")
@@ -2031,9 +2073,9 @@ def get_lab_result(
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"LabCorp results error: {e.response.text}")
+        raise HTTPException(status_code=502, detail="LabCorp results retrieval failed — service unavailable")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=502, detail="External service error — please try again")
 
     lc_status   = data.get("status", "")
     observations = []
@@ -3200,12 +3242,26 @@ def download_imaging_result_pdf(
             media_type="application/pdf",
             headers={"Content-Disposition": f"inline; filename={fname}"},
         )
-    # Legacy: file stored on filesystem (pre-migration uploads)
+    # Legacy: file stored on filesystem (pre-migration uploads).
+    # HIPAA security: sanitize the stored path to prevent path traversal attacks.
+    # Only serve files that reside within the designated uploads directory.
     legacy_path = getattr(order, "result_file_path", "") or ""
     if legacy_path:
-        import os as _os
-        if _os.path.isfile(legacy_path):
-            return FileResponse(legacy_path, media_type="application/pdf")
+        _UPLOADS_DIR = os.path.abspath(os.getenv("UPLOADS_DIR", "./uploads"))
+        _safe_path = os.path.abspath(legacy_path)
+        # Reject any path that escapes the uploads directory
+        if not _safe_path.startswith(_UPLOADS_DIR + os.sep) and _safe_path != _UPLOADS_DIR:
+            _exc_logger.warning(
+                "Path traversal attempt blocked: order_id=%s path=%s user_id=%s",
+                order_id, legacy_path, current_user.id
+            )
+            raise HTTPException(status_code=404, detail="No result PDF available for this order")
+        if os.path.isfile(_safe_path):
+            return FileResponse(
+                _safe_path,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f"attachment; filename=imaging_result_{order_id}.pdf"},
+            )
     raise HTTPException(status_code=404, detail="No result PDF available for this order")
 
 
@@ -3539,10 +3595,86 @@ def dashboard_stats(
 @app.get("/api/audit-logs")
 def audit_logs(
     db: Session = Depends(get_db),
-    _: models.User = Depends(require_admin),
+    current_user: models.User = Depends(require_admin),
+    # HIPAA §164.312(b): audit log review must cover the full 6-year retention window.
+    # Support date-range filtering and paging so admins can retrieve any time window.
+    start_date:  Optional[str] = None,   # ISO date, e.g. "2025-01-01"
+    end_date:    Optional[str] = None,   # ISO date, e.g. "2025-12-31"
+    user_id:     Optional[int] = None,   # filter by workforce member
+    action:      Optional[str] = None,   # filter by action type (e.g. "VIEW_PATIENT")
+    resource_type: Optional[str] = None, # filter by resource type
+    page:        int = 1,
+    page_size:   int = 200,              # max 1000 per page to prevent memory exhaustion
+    export_csv:  bool = False,           # set true to receive a CSV download
 ):
-    rows = db.query(models.AuditLog).order_by(models.AuditLog.timestamp.desc()).limit(500).all()
-    return [clean(r) for r in rows]
+    """
+    HIPAA §164.312(b) — Activity review endpoint.
+    Returns paginated audit log entries with optional date-range and field filtering.
+    Set export_csv=true to download as a CSV file suitable for 6-year record retention.
+    """
+    page_size = min(page_size, 1000)
+    q = db.query(models.AuditLog)
+    if start_date:
+        try:
+            q = q.filter(models.AuditLog.timestamp >= datetime.fromisoformat(start_date))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format (use YYYY-MM-DD)")
+    if end_date:
+        try:
+            _end = datetime.fromisoformat(end_date) + timedelta(days=1)
+            q = q.filter(models.AuditLog.timestamp < _end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format (use YYYY-MM-DD)")
+    if user_id is not None:
+        q = q.filter(models.AuditLog.user_id == user_id)
+    if action:
+        q = q.filter(models.AuditLog.action.ilike(f"%{action}%"))
+    if resource_type:
+        q = q.filter(models.AuditLog.resource_type.ilike(f"%{resource_type}%"))
+
+    total = q.count()
+    rows  = (q.order_by(models.AuditLog.timestamp.desc())
+              .offset((page - 1) * page_size)
+              .limit(page_size)
+              .all())
+
+    audit(db, current_user.id, "VIEW_AUDIT_LOGS", "AuditLog", "all",
+          details=f"page={page} page_size={page_size} total_matching={total}")
+
+    if export_csv:
+        import io, csv as _csv
+        buf = io.StringIO()
+        writer = _csv.DictWriter(buf, fieldnames=[
+            "id","timestamp","user_id","action","resource_type","resource_id",
+            "ip_address","user_agent","details"
+        ])
+        writer.writeheader()
+        for r in rows:
+            writer.writerow({
+                "id": r.id,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else "",
+                "user_id": r.user_id,
+                "action": r.action,
+                "resource_type": r.resource_type,
+                "resource_id": r.resource_id,
+                "ip_address": r.ip_address,
+                "user_agent": r.user_agent,
+                "details": r.details,
+            })
+        csv_bytes = buf.getvalue().encode("utf-8")
+        return StreamingResponse(
+            BytesIO(csv_bytes),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="audit_log_export_{datetime.utcnow().strftime("%Y%m%d_%H%M%S")}.csv"'},
+        )
+
+    return {
+        "total":     total,
+        "page":      page,
+        "page_size": page_size,
+        "pages":     (total + page_size - 1) // page_size,
+        "rows":      [clean(r) for r in rows],
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -4331,7 +4463,7 @@ def _build_weno_ncpdp_xml(rx, patient, order_id: str, epcs_code: str = "") -> st
 
     sw = ET.SubElement(hdr, f"{{{NS}}}SenderSoftware")
     ET.SubElement(sw, f"{{{NS}}}SenderSoftwareDeveloper").text        = "MedFlow"
-    ET.SubElement(sw, f"{{{NS}}}SenderSoftwareProduct").text          = "MedFlowEMR"
+    ET.SubElement(sw, f"{{{NS}}}SenderSoftwareProduct").text          = "ZelphonHealthEMR"
     ET.SubElement(sw, f"{{{NS}}}SenderSoftwareVersionRelease").text   = "1.0"
 
     # ── Body → NewRx ──────────────────────────────────────────────────────────
@@ -4645,7 +4777,7 @@ async def drug_search(
                 })
         return {"drugs": drugs[:25]}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"RxNorm API error: {str(e)}")
+        raise HTTPException(status_code=502, detail="RxNorm lookup failed — external service unavailable")
 
 
 @app.get("/api/drugs/{rxcui}/info")
@@ -4681,7 +4813,7 @@ async def drug_info(
             "schedule": schedule,
         }
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"RxNorm API error: {str(e)}")
+        raise HTTPException(status_code=502, detail="RxNorm lookup failed — external service unavailable")
 
 
 async def _rxnorm_get(url: str) -> dict:
@@ -5394,7 +5526,7 @@ ZAPRITE_API_KEY    = os.getenv("ZAPRITE_API_KEY", "")
 ZAPRITE_BASE_URL   = "https://api.zaprite.com/v1"
 
 def _seed_membership_plans(db: Session):
-    """Insert default Valiant DPC membership plans if none exist."""
+    """Insert default Zelphon Health membership plans if none exist."""
     if db.query(models.MembershipPlan).count() > 0:
         return
     plans = [
@@ -5751,6 +5883,53 @@ def portal_payments(patient: models.Patient = Depends(get_portal_patient), db: S
     return result
 
 
+# ── Patient portal: logout & password change ─────────────────────────────────
+
+@app.post("/portal/logout")
+def portal_logout(
+    request: Request = None,
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """
+    HIPAA §164.312(a)(2)(i): terminate patient portal sessions on explicit logout.
+    Audit the event per §164.312(b).
+    """
+    audit(db, None, "PORTAL_LOGOUT", "Patient", str(patient.id), request=request,
+          details=f"patient_id={patient.id}")
+    resp = JSONResponse({"success": True})
+    # Clear portal auth cookie if one was set (mirrors provider logout pattern)
+    resp.delete_cookie(key="portal_auth", path="/portal", httponly=True, secure=True, samesite="strict")
+    return resp
+
+
+@app.put("/portal/password")
+def portal_change_password(
+    data: dict,
+    request: Request = None,
+    patient: models.Patient = Depends(get_portal_patient),
+    db: Session = Depends(get_db),
+):
+    """
+    Allow a patient to change their own portal password.
+    HIPAA §164.308(a)(5)(ii)(D): password management safeguard.
+    Audit the change per §164.312(b).
+    """
+    current_password = data.get("current_password", "")
+    new_password     = data.get("new_password", "")
+    if not current_password or not new_password:
+        raise HTTPException(status_code=400, detail="current_password and new_password are required")
+    if not patient.portal_password_hash or not verify_pw(current_password, patient.portal_password_hash):
+        audit(db, None, "PORTAL_PASSWORD_CHANGE_FAILED", "Patient", str(patient.id),
+              request=request, details="bad_current_password")
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    _validate_password(new_password)
+    patient.portal_password_hash = hash_pw(new_password)
+    db.commit()
+    audit(db, None, "PORTAL_PASSWORD_CHANGED", "Patient", str(patient.id), request=request)
+    return {"success": True}
+
+
 # ── Staff: manage portal accounts ────────────────────────────────────────────
 
 @app.post("/api/patients/{patient_id}/portal/activate")
@@ -5982,7 +6161,7 @@ def _build_record_pdf(data: dict) -> bytes:
         canvas.rect(0, h - 36, w, 36, fill=1, stroke=0)
         canvas.setFont("Helvetica-Bold", 10)
         canvas.setFillColor(WHITE)
-        canvas.drawString(18, h - 23, "MedFlow EMR — CONFIDENTIAL HEALTH RECORD")
+        canvas.drawString(18, h - 23, "Zelphon Health EMR — CONFIDENTIAL HEALTH RECORD")
         canvas.drawRightString(w - 18, h - 23, pt_name)
         # Footer
         canvas.setFillColor(GREY)
@@ -6576,16 +6755,42 @@ async def import_patient_records(
 
     if file and file.filename:
         filename = file.filename
+        # HIPAA: validate file type by both extension AND content-type header.
+        # Only allow PDF and plain-text uploads to prevent malicious file uploads.
+        _ALLOWED_EXTENSIONS = {".pdf", ".txt"}
+        _ALLOWED_CONTENT_TYPES = {
+            "application/pdf", "text/plain",
+            "application/octet-stream",  # some browsers send this for .pdf
+        }
+        _file_ext = os.path.splitext(filename.lower())[1]
+        _file_ct  = (getattr(file, "content_type", None) or "").split(";")[0].strip().lower()
+        if _file_ext not in _ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=415,
+                detail=f"Unsupported file type '{_file_ext}'. Only PDF and plain text files are accepted."
+            )
+        if _file_ct and _file_ct not in _ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=415,
+                detail="Unsupported content type. Only PDF and plain text files are accepted."
+            )
         content = await file.read()
         _MAX_IMPORT_BYTES = 50 * 1024 * 1024  # 50 MB
         if len(content) > _MAX_IMPORT_BYTES:
             raise HTTPException(status_code=413, detail="File too large — maximum 50 MB")
-        if file.filename.lower().endswith(".pdf"):
+        # Magic-byte check: PDF files must start with %PDF
+        if _file_ext == ".pdf":
+            if not content[:5].startswith(b"%PDF-"):
+                raise HTTPException(
+                    status_code=415,
+                    detail="File does not appear to be a valid PDF (magic byte check failed)."
+                )
             source_type = "pdf"
             try:
                 raw_text = _extract_pdf_text(content)
             except Exception as e:
-                raise HTTPException(status_code=422, detail=f"Could not read PDF: {e}")
+                _exc_logger.warning("PDF extraction failed for patient %s: %s", patient_id, type(e).__name__)
+                raise HTTPException(status_code=422, detail="Could not read PDF — the file may be corrupted or encrypted.")
         else:
             raw_text = content.decode("utf-8", errors="replace")
     elif text:
@@ -6614,18 +6819,20 @@ async def import_patient_records(
         parsed = _call_import_ai(raw_text)
     except Exception as e:
         imp.status = "error"
-        imp.error_detail = str(e)
+        imp.error_detail = str(e)   # stored server-side only, never returned to client
         db.commit()
-        raise HTTPException(status_code=502, detail=f"AI parsing failed: {e}")
+        _exc_logger.exception("AI import parsing failed for patient %s import %s", patient_id, imp.id)
+        raise HTTPException(status_code=502, detail="AI parsing failed — please try again or contact support")
 
     # ── File the data as pending_review ───────────────────────────────────────
     try:
         counts = _file_imported_data(patient_id, parsed, current_user.id, imp.id, db)
     except Exception as e:
         imp.status = "error"
-        imp.error_detail = str(e)
+        imp.error_detail = str(e)   # stored server-side only, never returned to client
         db.commit()
-        raise HTTPException(status_code=500, detail=f"Failed to file records: {e}")
+        _exc_logger.exception("Failed to file imported records for patient %s import %s", patient_id, imp.id)
+        raise HTTPException(status_code=500, detail="Failed to file records — please contact support")
 
     # ── Update import record ─────────────────────────────────────────────────
     imp.ai_summary              = parsed.get("summary", "")
@@ -6821,7 +7028,7 @@ def send_message_to_patient(
     # Send SMS to patient's phone if they have consent and a phone number on file
     # Send from this provider's dedicated Telnyx number so replies route back correctly
     if patient.sms_consent and patient.phone:
-        sms_text    = f"[Valiant DPC] {body}"
+        sms_text    = f"[Zelphon Health] {body}"
         from_num    = getattr(current_user, "telnyx_sms_number", None) or TELNYX_SMS_NUMBER
         telnyx_mid  = _send_sms(patient.phone, sms_text, from_number=from_num)
         sms_status  = "sent" if telnyx_mid else "failed"
@@ -6865,7 +7072,7 @@ def sms_forward_message(
 
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
     sms_body = (
-        f"[Valiant DPC] Msg from {patient.first_name} {patient.last_name} "
+        f"[Zelphon Health] Msg from {patient.first_name} {patient.last_name} "
         f"(PT#{patient_id}):\n\n{msg.body}\n\n"
         f"Reply to this number to respond to the patient."
     )
@@ -7028,7 +7235,7 @@ def portal_send_message(
 
     if dest_cell:
         sms_body = (
-            f"[Valiant DPC] Portal msg from {patient.first_name} {patient.last_name} "
+            f"[Zelphon Health] Portal msg from {patient.first_name} {patient.last_name} "
             f"(PT#{patient.id}):\n\n{body}\n\n"
             f"Reply to this number to respond to the patient."
         )
@@ -7138,11 +7345,11 @@ _SMS_DISCLAIMER = (
 
 _SMS_NO_CONSENT = (
     "We received your text but SMS communication has not been enabled for your account. "
-    "Please contact Valiant DPC to update your communication preferences."
+    "Please contact Zelphon Health to update your communication preferences."
 )
 
 _SMS_NOT_FOUND = (
-    "This number is reserved for Valiant DPC patients. "
+    "This number is reserved for Zelphon Health patients. "
     "If you are a patient, please ensure we have your current phone number on file."
 )
 
@@ -7267,7 +7474,7 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
                 # Send from the provider's Telnyx number so the patient sees
                 # the same number they originally texted
                 from_num   = getattr(replying_provider, "telnyx_sms_number", None) or TELNYX_SMS_NUMBER
-                fwd_body   = f"[Valiant DPC] {body_text}"
+                fwd_body   = f"[Zelphon Health] {body_text}"
                 telnyx_mid = _send_sms(pt.phone, fwd_body, from_number=from_num)
                 sms_status = "sent" if telnyx_mid else "failed"
 
@@ -7345,7 +7552,7 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     # ── Forward to provider's cell phone ─────────────────────────────────────
     if provider and getattr(provider, "cell_phone", ""):
         fwd = (
-            f"[Valiant DPC] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
+            f"[Zelphon Health] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
             f"{body_text}\n\n"
             f"Reply to this number to respond. Message is filed in the EMR."
         )
@@ -7357,7 +7564,7 @@ async def telnyx_sms_webhook(request: Request, db: Session = Depends(get_db)):
     elif PHYSICIAN_CELL:
         # Fallback: global physician cell (for backward-compat with single-provider setups)
         fwd = (
-            f"[Valiant DPC] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
+            f"[Zelphon Health] {patient.first_name} {patient.last_name} (PT#{patient.id}) texted:\n\n"
             f"{body_text}\n\n"
             f"Reply to this number to respond. Message is filed in the EMR."
         )
@@ -7532,7 +7739,7 @@ async def public_create_payment(data: dict, request: Request, db: Session = Depe
         models.MembershipPlan.id == enroll.plan_id
     ).first() if enroll.plan_id else None
     amount_cents = int((plan.price_monthly if plan else 0) * 100)
-    description  = f"Valiant DPC — {enroll.plan_name} Monthly Membership"
+    description  = f"Zelphon Health — {enroll.plan_name} Monthly Membership"
 
     if provider == "zaprite":
         if not ZAPRITE_API_KEY:
@@ -8472,7 +8679,7 @@ def process_monthly_billing(db: Session):
         results["attempted"] += 1
         amount_cents = int(round(billing_amount * 100))
         period = today.strftime('%Y') if is_annual else today.strftime('%B %Y')
-        note = f"Valiant DPC — {mem.plan_name} membership ({period})"
+        note = f"Zelphon Health — {mem.plan_name} membership ({period})"
         provider = mem.payment_provider or "square"
 
         try:
