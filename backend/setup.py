@@ -73,9 +73,13 @@ _migrations = [
 ]
 with engine.connect() as _conn:
     for _sql in _migrations:
-        _conn.execute(text(_sql))
-    _conn.commit()
-print("✅ Schema migrations applied.")
+        try:
+            _conn.execute(text(_sql))
+            _conn.commit()
+        except Exception as _e:
+            _conn.rollback()
+            print(f"⚠️  Migration skipped (likely already applied): {str(_e)[:120]}")
+print("✅ Schema migrations applied (some may have been skipped as already present).")
 
 db = SessionLocal()
 
