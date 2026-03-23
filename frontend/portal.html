@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Patient Portal — Valiant Direct Primary Care</title>
+<title>Patient Portal — Zelphon Health</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -41,12 +41,26 @@ const {useState, useEffect, useCallback} = React;
 
 const BASE = '';
 
-async function api(method, path, body, token) {
+// Reads the portal_csrf cookie value (non-httpOnly) for the double-submit CSRF pattern.
+function getPortalCsrf() {
+  const match = document.cookie.match(/(?:^|;\s*)portal_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+// api() uses httpOnly cookie auth (credentials: 'include').
+// CSRF token is sent as X-CSRF-Token header for state-changing requests.
+// The token parameter is accepted but ignored (kept for call-site compatibility
+// during the migration from Bearer-token to cookie-based auth).
+async function api(method, path, body, _token) {
   const headers = {'Content-Type': 'application/json'};
-  if (token) headers['Authorization'] = 'Bearer ' + token;
+  if (!['GET','HEAD','OPTIONS'].includes(method.toUpperCase())) {
+    const csrf = getPortalCsrf();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+  }
   const res = await fetch(BASE + path, {
     method,
     headers,
+    credentials: 'include',
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -57,7 +71,8 @@ async function api(method, path, body, token) {
 }
 
 async function apiForm(path, formData) {
-  const res = await fetch(BASE + path, {method: 'POST', body: formData});
+  // Login endpoint: credentials: 'include' so the server can set the portal_auth httpOnly cookie.
+  const res = await fetch(BASE + path, {method: 'POST', body: formData, credentials: 'include'});
   if (!res.ok) {
     const err = await res.json().catch(() => ({detail: res.statusText}));
     throw new Error(err.detail || 'Login failed');
@@ -85,8 +100,9 @@ function LoginPage({onLogin}) {
       const fd = new FormData();
       fd.append('username', email);
       fd.append('password', password);
-      const data = await apiForm('/portal/login', fd);
-      onLogin(data.access_token);
+      // Server sets portal_auth httpOnly cookie; we don't store the token client-side.
+      await apiForm('/portal/login', fd);
+      onLogin();
     } catch(err) {
       setError(err.message);
     }
@@ -99,7 +115,7 @@ function LoginPage({onLogin}) {
         <div style={{textAlign:'center',marginBottom:32}}>
           <div style={{width:56,height:56,borderRadius:14,background:'rgba(255,255,255,.15)',display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',fontSize:28}}>🏥</div>
           <h1 style={{color:'#fff',fontSize:24,fontWeight:700,marginBottom:6}}>Patient Portal</h1>
-          <p style={{color:'rgba(255,255,255,.7)',fontSize:14}}>Valiant Direct Primary Care</p>
+          <p style={{color:'rgba(255,255,255,.7)',fontSize:14}}>Zelphon Health</p>
         </div>
         <div className="card">
           <form onSubmit={submit}>
@@ -130,7 +146,7 @@ function Header({patient, onLogout}) {
       <div style={{display:'flex',alignItems:'center',gap:12}}>
         <span style={{fontSize:22}}>🏥</span>
         <div>
-          <div style={{fontWeight:700,fontSize:15}}>Valiant DPC</div>
+          <div style={{fontWeight:700,fontSize:15}}>Zelphon Health</div>
           <div style={{fontSize:11,opacity:.7}}>Patient Portal</div>
         </div>
       </div>
@@ -427,27 +443,42 @@ function ProfileCard({patient}) {
 
 // ── Main portal app ───────────────────────────────────────────────────────────
 function PortalApp() {
-  const [token, setToken] = useState(() => sessionStorage.getItem('portal_token') || '');
+  // Auth state: 'loading' | 'logged_out' | 'logged_in'
+  // The JWT lives only in the httpOnly portal_auth cookie — never in JS memory.
+  const [authState, setAuthState] = useState('loading');
   const [patient, setPatient] = useState(null);
   const [tab, setTab] = useState('notes');
   const [loadError, setLoadError] = useState('');
 
+  // On mount, attempt to verify an existing portal_auth cookie by hitting /portal/me.
   useEffect(() => {
-    if (!token) return;
-    sessionStorage.setItem('portal_token', token);
-    api('GET', '/portal/me', null, token)
-      .then(setPatient)
-      .catch(e => { setLoadError(e.message); setToken(''); sessionStorage.removeItem('portal_token'); });
-  }, [token]);
+    api('GET', '/portal/me', null, null)
+      .then(p => { setPatient(p); setAuthState('logged_in'); })
+      .catch(() => setAuthState('logged_out'));
+  }, []);
 
   const logout = () => {
-    setToken('');
+    api('POST', '/portal/logout', {}, null).catch(() => {});
     setPatient(null);
-    sessionStorage.removeItem('portal_token');
+    setAuthState('logged_out');
   };
 
-  if (!token || loadError) {
-    return <LoginPage onLogin={t => { setToken(t); setLoadError(''); }}/>;
+  if (authState === 'loading') {
+    return (
+      <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <span className="spinner" style={{width:36,height:36,borderWidth:4}}/>
+      </div>
+    );
+  }
+
+  if (authState === 'logged_out' || loadError) {
+    return <LoginPage onLogin={() => {
+      setLoadError('');
+      // After login, fetch patient info (cookie is now set).
+      api('GET', '/portal/me', null, null)
+        .then(p => { setPatient(p); setAuthState('logged_in'); })
+        .catch(e => { setLoadError(e.message); setAuthState('logged_out'); });
+    }}/>;
   }
 
   if (!patient) {
@@ -495,7 +526,7 @@ function PortalApp() {
         </div>
       </div>
       <footer style={{textAlign:'center',padding:'16px',fontSize:12,color:'#94a3b8',borderTop:'1px solid #e2e8f0',background:'#fff'}}>
-        Valiant Direct Primary Care · Patient Portal · Secure &amp; HIPAA-Compliant
+        Zelphon Health · Patient Portal · Secure &amp; HIPAA-Compliant
       </footer>
     </div>
   );

@@ -507,7 +507,7 @@ app = FastAPI(
 # CORS: credentials (cookies/Authorization header) must never be combined with a
 # wildcard origin — browsers reject it and it's a HIPAA data-leakage risk.
 # Set ALLOWED_ORIGINS to a comma-separated list of explicit origins in production
-# (e.g. "https://app.medflow.com,https://portal.medflow.com").
+# (e.g. "https://app.zelphonhealth.com,https://portal.zelphonhealth.com").
 # When no explicit list is provided we still allow * but disable credentials so
 # public health-check/static routes continue to work.
 _origins_raw = os.getenv("ALLOWED_ORIGINS", "")
@@ -597,6 +597,23 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIXES):
             return await call_next(request)
+        # Portal endpoints use a separate portal_csrf cookie (double-submit pattern)
+        if path.startswith("/portal/"):
+            csrf_cookie = request.cookies.get("portal_csrf", "")
+            csrf_header = request.headers.get("X-CSRF-Token", "")
+            # Fallback: if portal request uses Bearer token (legacy clients), skip CSRF check
+            # since the token itself serves as a CSRF mitigation in that path.
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                return await call_next(request)
+            if not csrf_cookie or not csrf_header:
+                from fastapi.responses import JSONResponse as _JR
+                return _JR({"detail": "CSRF token missing"}, status_code=403)
+            if not hmac.compare_digest(csrf_cookie, csrf_header):
+                from fastapi.responses import JSONResponse as _JR
+                return _JR({"detail": "CSRF validation failed"}, status_code=403)
+            return await call_next(request)
+        # Staff EMR endpoints use mf_csrf cookie
         csrf_cookie = request.cookies.get("mf_csrf", "")
         csrf_header = request.headers.get("X-CSRF-Token", "")
         if not csrf_cookie or not csrf_header:
@@ -2785,7 +2802,8 @@ async def analyze_lesion(
 
         analysis = json.loads(raw_json)
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=502, detail=f"Claude returned invalid JSON: {e}")
+        _exc_logger.error("AI analysis returned invalid JSON: %s", str(e))
+        raise HTTPException(status_code=502, detail="AI analysis returned an unexpected response — please retry")
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Analysis timed out — please retry")
 
@@ -3117,7 +3135,7 @@ def _build_imaging_order_pdf(order: models.ImagingOrder, patient: models.Patient
     story.append(Spacer(1, 8))
     story.append(Paragraph("<b>ORDERING PROVIDER</b>", ParagraphStyle("sh",fontSize=11,spaceAfter=4,textColor=colors.HexColor("#1e3a5f"))))
     doc_name = f"Dr. {physician.full_name}" if hasattr(physician,"full_name") and physician.full_name else physician.username
-    story.append(Paragraph(f"{doc_name}  |  Valiant Direct Primary Care",
+    story.append(Paragraph(f"{doc_name}  |  Zelphon Health",
                            ParagraphStyle("body",fontSize=10,spaceAfter=2)))
     story.append(Spacer(1, 20))
     story.append(Paragraph("_" * 45 + "     " + "_" * 20,
@@ -3813,7 +3831,7 @@ async def create_square_subscription(
                     "idempotency_key": str(_uuid.uuid4()),
                     "given_name":      patient.first_name or "",
                     "family_name":     patient.last_name or "",
-                    "email_address":   patient.email or f"patient_{patient.id}@medflow.local",
+                    "email_address":   patient.email or f"patient_{patient.id}@zelphonhealth.local",
                     "reference_id":    str(patient.id),
                 },
             )
@@ -4462,7 +4480,7 @@ def _build_weno_ncpdp_xml(rx, patient, order_id: str, epcs_code: str = "") -> st
     ET.SubElement(snd, f"{{{NS}}}TertiaryIdentification").text   = WENO_PARTNER_PASSWORD_MD5
 
     sw = ET.SubElement(hdr, f"{{{NS}}}SenderSoftware")
-    ET.SubElement(sw, f"{{{NS}}}SenderSoftwareDeveloper").text        = "MedFlow"
+    ET.SubElement(sw, f"{{{NS}}}SenderSoftwareDeveloper").text        = "Zelphon Health"
     ET.SubElement(sw, f"{{{NS}}}SenderSoftwareProduct").text          = "ZelphonHealthEMR"
     ET.SubElement(sw, f"{{{NS}}}SenderSoftwareVersionRelease").text   = "1.0"
 
@@ -4606,7 +4624,8 @@ def _weno_soap_call(ncpdp_xml: str) -> dict:
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="WENO gateway timeout — try again")
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"WENO connection error: {e}")
+        _exc_logger.error("WENO connection error: %s", str(e))
+        raise HTTPException(status_code=502, detail="WENO e-prescribing service unavailable — please try again")
 
     raw = resp.text
     # Parse SOAP response — look for STATUS (success) or ERROR (failure)
@@ -5531,7 +5550,7 @@ def _seed_membership_plans(db: Session):
         return
     plans = [
         models.MembershipPlan(
-            name="Valiant", slug="valiant",
+            name="Zelphon Essential", slug="zelphon-essential",
             description="Comprehensive direct primary care for adults.",
             price_monthly=0.0, enrollment_fee=0.0,
             features=json.dumps([
@@ -5547,11 +5566,11 @@ def _seed_membership_plans(db: Session):
             age_min=18, age_max=None, color="#1e3a5f", sort_order=1,
         ),
         models.MembershipPlan(
-            name="Valiant Premier", slug="valiant-premier",
+            name="Zelphon Premier", slug="zelphon-premier",
             description="Enhanced direct primary care with expanded services and priority access.",
             price_monthly=0.0, enrollment_fee=0.0,
             features=json.dumps([
-                "All Valiant plan features",
+                "All Zelphon Essential plan features",
                 "Priority scheduling & extended visit times",
                 "Comprehensive wellness assessments",
                 "Advanced chronic disease management",
@@ -5564,7 +5583,7 @@ def _seed_membership_plans(db: Session):
             badge="Most Comprehensive", sort_order=2,
         ),
         models.MembershipPlan(
-            name="Young Valiant", slug="young-valiant",
+            name="Zelphon Junior", slug="zelphon-junior",
             description="Dedicated primary care for children and adolescents.",
             price_monthly=0.0, enrollment_fee=0.0,
             features=json.dumps([
@@ -5713,9 +5732,13 @@ def make_portal_token(patient_id: int) -> str:
 portal_oauth2 = OAuth2PasswordBearer(tokenUrl="/portal/login", auto_error=False)
 
 def get_portal_patient(
-    token: str = Depends(portal_oauth2),
+    request: Request,
+    token_header: str = Depends(portal_oauth2),
     db: Session = Depends(get_db),
 ) -> models.Patient:
+    # Prefer httpOnly cookie (XSS-safe); fall back to Authorization: Bearer header
+    # for backward compatibility with existing sessions.
+    token = request.cookies.get("portal_auth") or token_header
     credentials_exc = HTTPException(status_code=401, detail="Not authenticated")
     if not token:
         raise credentials_exc
@@ -5767,7 +5790,21 @@ def portal_login(
         raise HTTPException(status_code=401, detail="Invalid email or password")
     _clear_failures(ip)
     audit(db, None, "PORTAL_LOGIN", "Patient", str(patient.id), request=request)
-    return {"access_token": make_portal_token(patient.id), "token_type": "bearer"}
+    token = make_portal_token(patient.id)
+    csrf_token = secrets.token_hex(32)
+    # Return token in body for backward-compat AND set it as httpOnly cookie (HIPAA §164.312(a)(2)(iv))
+    resp = JSONResponse({"access_token": token, "token_type": "bearer"})
+    resp.set_cookie(
+        key="portal_auth", value=token,
+        httponly=True, secure=True, samesite="strict",
+        max_age=PORTAL_TOKEN_HOURS * 3600, path="/portal",
+    )
+    resp.set_cookie(
+        key="portal_csrf", value=csrf_token,
+        httponly=False, secure=True, samesite="strict",
+        max_age=PORTAL_TOKEN_HOURS * 3600, path="/portal",
+    )
+    return resp
 
 
 @app.get("/portal/me")
@@ -5898,8 +5935,8 @@ def portal_logout(
     audit(db, None, "PORTAL_LOGOUT", "Patient", str(patient.id), request=request,
           details=f"patient_id={patient.id}")
     resp = JSONResponse({"success": True})
-    # Clear portal auth cookie if one was set (mirrors provider logout pattern)
-    resp.delete_cookie(key="portal_auth", path="/portal", httponly=True, secure=True, samesite="strict")
+    resp.delete_cookie(key="portal_auth",  path="/portal", httponly=True,  secure=True, samesite="strict")
+    resp.delete_cookie(key="portal_csrf",  path="/portal", httponly=False, secure=True, samesite="strict")
     return resp
 
 

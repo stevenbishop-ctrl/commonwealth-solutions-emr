@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Commonwealth Solutions EMR</title>
+<title>Zelphon Health EMR</title>
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -188,7 +188,7 @@ function LoginPage({onLogin}){
           <div style={{width:60,height:60,background:'#dbeafe',borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px'}}>
             <Icon name="shield" size={32} cls="" style={{color:'#2563eb'}}/>
           </div>
-          <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>Commonwealth Solutions EMR</h1>
+          <h1 style={{fontSize:28,fontWeight:800,color:'#1e293b'}}>Zelphon Health EMR</h1>
           <p style={{color:'#64748b',fontSize:14,marginTop:4}}>Secure Clinical Management</p>
         </div>
         {err&&<div style={{background:'#fee2e2',color:'#dc2626',padding:'10px 14px',borderRadius:8,marginBottom:16,fontSize:14}}>{err}</div>}
@@ -2770,15 +2770,16 @@ const NAV=[
 ];
 
 function App(){
-  const [token,setToken]=useState(()=>localStorage.getItem('mf_token'));
-  const [user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem('mf_user'));}catch{return null;}});
+  // HIPAA: JWT stored only in memory (httpOnly cookie set by server) — never in localStorage.
+  const [token,setToken]=useState(null);
+  const [user,setUser]=useState(null);
   const [page,setPage]=useState('dashboard');
   const [selectedPatient,setSelectedPatient]=useState(null);
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const toast=useToast();
 
   useEffect(()=>{
-    const h=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+    const h=()=>{setToken(null);setUser(null);};
     window.addEventListener('auth-expired',h);
     return()=>window.removeEventListener('auth-expired',h);
   },[]);
@@ -2795,12 +2796,8 @@ function App(){
     return()=>window.removeEventListener('nav',h);
   },[]);
 
-  const login=(t,u)=>{
-    setToken(t);setUser(u);
-    localStorage.setItem('mf_token',t);
-    localStorage.setItem('mf_user',JSON.stringify(u));
-  };
-  const logout=()=>{setToken(null);setUser(null);localStorage.removeItem('mf_token');localStorage.removeItem('mf_user');};
+  const login=(t,u)=>{setToken(t);setUser(u);};
+  const logout=()=>{setToken(null);setUser(null);};
 
   if(!token||!user) return <LoginPage onLogin={login}/>;
 
@@ -2847,7 +2844,7 @@ function App(){
             <Icon name="shield" size={20}/>
           </div>
           <div>
-            <div style={{color:'#fff',fontWeight:700,fontSize:16}}>MedFlow</div>
+            <div style={{color:'#fff',fontWeight:700,fontSize:16}}>Zelphon Health</div>
             <div style={{color:'#64748b',fontSize:11}}>EMR v1.0</div>
           </div>
         </div>
@@ -2872,7 +2869,7 @@ function App(){
           <button onClick={()=>setSidebarOpen(true)} style={{background:'none',border:'none',color:'#fff',cursor:'pointer',padding:4}}>
             <Icon name="menu" size={22}/>
           </button>
-          <span style={{color:'#fff',fontWeight:700}}>Commonwealth Solutions EMR</span>
+          <span style={{color:'#fff',fontWeight:700}}>Zelphon Health EMR</span>
         </div>
         <style>{`@media(max-width:768px){#mobile-header{display:flex!important;}}`}</style>
         <div style={{padding:24,maxWidth:1200,margin:'0 auto'}}>

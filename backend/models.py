@@ -349,7 +349,7 @@ class Prescription(Base):
     created_at       = Column(DateTime, default=datetime.utcnow)
     updated_at       = Column(DateTime, default=datetime.utcnow)
 
-    # 503A Compounding fields (added for Commonwealth Solutions telehealth platform)
+    # 503A Compounding fields (Zelphon Health telehealth platform)
     is_compounded           = Column(Boolean, default=False)      # True for 503A compound orders
     compounding_clinic_necessity = Column(Text, default="")       # Clinical necessity documentation (required)
     compounding_reason_allergy   = Column(Boolean, default=False) # Allergy to commercial product
@@ -375,18 +375,18 @@ class SavedPharmacy(Base):
 
 
 class MembershipPlan(Base):
-    """Membership plan templates — Valiant, Valiant Premier, Young Valiant."""
+    """Membership plan templates — Zelphon Essential, Zelphon Premier, Zelphon Junior."""
     __tablename__ = "membership_plans"
     id              = Column(Integer, primary_key=True, index=True)
-    name            = Column(String, nullable=False)          # "Valiant", "Valiant Premier", "Young Valiant"
-    slug            = Column(String, nullable=False, unique=True)  # "valiant", "valiant-premier", "young-valiant"
+    name            = Column(String, nullable=False)          # "Zelphon Essential", "Zelphon Premier", "Zelphon Junior"
+    slug            = Column(String, nullable=False, unique=True)  # "zelphon-essential", "zelphon-premier", "zelphon-junior"
     description     = Column(Text, default="")
     price_monthly   = Column(Float, default=0.0)              # Monthly fee (placeholder until set)
     price_annual    = Column(Float, nullable=True)            # Optional annual price
     enrollment_fee  = Column(Float, default=0.0)              # One-time enrollment fee
     features        = Column(Text, default="[]")              # JSON array of feature strings
-    age_min         = Column(Integer, nullable=True)          # Minimum age (Young Valiant: 0)
-    age_max         = Column(Integer, nullable=True)          # Maximum age (Young Valiant: 17)
+    age_min         = Column(Integer, nullable=True)          # Minimum age (Zelphon Junior: 0)
+    age_max         = Column(Integer, nullable=True)          # Maximum age (Zelphon Junior: 17)
     color           = Column(String, default="#1e3a5f")       # Brand color for UI
     badge           = Column(String, nullable=True)           # "Most Popular", "Best Value", etc.
     is_active       = Column(Boolean, default=True)

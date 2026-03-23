@@ -9,7 +9,7 @@ import os
 import subprocess
 import sys
 
-print("=== MedFlow EMR starting up ===", flush=True)
+print("=== Zelphon Health EMR starting up ===", flush=True)
 
 # ── 1. DB setup ────────────────────────────────────────────────────────────
 print("=== Running setup.py (timeout 30s) ===", flush=True)

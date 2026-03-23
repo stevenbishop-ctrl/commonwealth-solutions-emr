@@ -90,74 +90,90 @@ db = SessionLocal()
 #   2. Redeploy — setup.py will reset the password and print confirmation
 #   3. Log in with admin / <RESET_ADMIN_PW value>
 #   4. Change your password in Settings, then remove RESET_ADMIN_PW from Railway
+# ── HIPAA: RESET_ADMIN_PW emergency recovery ─────────────────────────────────
+# ONLY resets the password when the RESET_ADMIN_PW env var is explicitly set.
+# Credentials are intentionally NOT printed to logs — Railway log streams are
+# accessible to platform support staff and must never contain PHI or credentials.
 _reset_pw = os.environ.get("RESET_ADMIN_PW", "").strip()
 if _reset_pw:
     _admin = db.query(models.User).filter(models.User.username == "admin").first()
     if _admin:
-        _admin.password_hash = bcrypt.hashpw(_reset_pw.encode(), bcrypt.gensalt()).decode()
+        # bcrypt cost 13 — consistent with main.py hash_pw()
+        _admin.password_hash = bcrypt.hashpw(_reset_pw.encode(), bcrypt.gensalt(rounds=13)).decode()
         _admin.token_version = (_admin.token_version or 0) + 1  # invalidate all existing sessions
+        _admin.password_changed_at = datetime.utcnow()
         db.commit()
-        print(f"✅ Admin password reset via RESET_ADMIN_PW env var.")
-        print(f"   Login with: admin / {_reset_pw}")
-        print(f"   IMPORTANT: remove RESET_ADMIN_PW from your environment after logging in!")
+        # Do NOT log the password value — only confirm the operation completed
+        print("✅ Admin password reset via RESET_ADMIN_PW env var. Remove that variable now.")
     else:
         print("⚠️  RESET_ADMIN_PW set but no admin user found — will be created below.")
     sys.stdout.flush()
 
+# ── Initial DB seed (first deploy only) ──────────────────────────────────────
+# HIPAA: admin accounts must NOT be auto-seeded with a known default password
+# that is force-reset on every deploy. Instead we require SEED_ADMIN_PASSWORD
+# to be set explicitly in the environment. If it is not set and no admin exists,
+# the service starts but login is impossible until the env var is provided.
 existing = db.query(models.User).filter(models.User.username == "admin").first()
 if not existing:
-    admin = models.User(
-        username="admin",
-        email="admin@commonwealth.local",
-        password_hash=bcrypt.hashpw(b"Commonwealth1!", bcrypt.gensalt()).decode(),
-        full_name="System Administrator",
-        npi_number="",
-        specialty="Administration",
-        role="admin",
-        is_active=True,
-    )
-    db.add(admin)
+    _seed_pw = os.environ.get("SEED_ADMIN_PASSWORD", "").strip()
+    if not _seed_pw:
+        print("⚠️  WARNING: No admin user exists and SEED_ADMIN_PASSWORD is not set.")
+        print("   Set SEED_ADMIN_PASSWORD in Railway environment variables and redeploy to create the admin account.")
+    else:
+        admin = models.User(
+            username="admin",
+            email=os.environ.get("SEED_ADMIN_EMAIL", "admin@zelphonhealth.com"),
+            password_hash=bcrypt.hashpw(_seed_pw.encode(), bcrypt.gensalt(rounds=13)).decode(),
+            full_name="System Administrator",
+            npi_number="",
+            specialty="Administration",
+            role="admin",
+            is_active=True,
+            password_changed_at=datetime.utcnow(),
+        )
+        db.add(admin)
 
-    # ── Demo physician ───────────────────────────────────────────────────────
-    physician = models.User(
-        username="drbishop",
-        email="stevenbishop@protonmail.com",
-        password_hash=bcrypt.hashpw(b"Commonwealth1!", bcrypt.gensalt()).decode(),
-        full_name="Dr. Steven Bishop, MD",
-        npi_number="",
-        specialty="Internal Medicine",
-        role="physician",
-        is_active=True,
-    )
-    db.add(physician)
-
-    db.commit()
-    print("✅ Database created.")
-    print("   Admin login   →  admin / Commonwealth1!")
-    print("   Doctor login  →  drbishop / Commonwealth1!")
-else:
-    # ── Force-reset admin password on every deploy so credentials are always known ──
-    existing.password_hash = bcrypt.hashpw(b"Commonwealth1!", bcrypt.gensalt()).decode()
-    existing.password_changed_at = datetime.utcnow()
-    existing.is_active = True
-    # Ensure drbishop account exists
-    bishop = db.query(models.User).filter(models.User.username == "drbishop").first()
-    if not bishop:
+        # ── Physician account ─────────────────────────────────────────────────
         bishop = models.User(
             username="drbishop",
             email="stevenbishop@protonmail.com",
-            password_hash=bcrypt.hashpw(b"Commonwealth1!", bcrypt.gensalt()).decode(),
+            password_hash=bcrypt.hashpw(_seed_pw.encode(), bcrypt.gensalt(rounds=13)).decode(),
             full_name="Dr. Steven Bishop, MD",
             npi_number="",
             specialty="Internal Medicine",
             role="physician",
             is_active=True,
+            password_changed_at=datetime.utcnow(),
         )
         db.add(bishop)
-    db.commit()
-    print("✅ Admin password reset. drbishop account ensured.")
-    print("   Admin login   →  admin / Commonwealth1!")
-    print("   Doctor login  →  drbishop / Commonwealth1!")
+
+        db.commit()
+        print("✅ Database seeded. Change all passwords immediately after first login.")
+        # Do NOT print the password value to logs
+else:
+    # On subsequent deploys, only ensure the physician account exists — do NOT
+    # touch existing passwords so user-changed credentials are preserved.
+    bishop = db.query(models.User).filter(models.User.username == "drbishop").first()
+    if not bishop:
+        _seed_pw = os.environ.get("SEED_ADMIN_PASSWORD", "").strip()
+        if _seed_pw:
+            bishop = models.User(
+                username="drbishop",
+                email="stevenbishop@protonmail.com",
+                password_hash=bcrypt.hashpw(_seed_pw.encode(), bcrypt.gensalt(rounds=13)).decode(),
+                full_name="Dr. Steven Bishop, MD",
+                npi_number="",
+                specialty="Internal Medicine",
+                role="physician",
+                is_active=True,
+                password_changed_at=datetime.utcnow(),
+            )
+            db.add(bishop)
+            db.commit()
+            print("✅ drbishop account created. Change password immediately after first login.")
+    else:
+        print("✅ Existing user accounts preserved — no password changes on deploy.")
 
 # SQLAlchemy's QueuePool keeps PostgreSQL sockets open even after db.close(),
 # causing this script to hang indefinitely. os._exit(0) forces an immediate

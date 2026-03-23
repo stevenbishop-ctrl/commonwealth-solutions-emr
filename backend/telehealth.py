@@ -1,7 +1,7 @@
 """
-MedFlow EMR — Telehealth Extension Module
+Zelphon Health EMR — Telehealth Extension Module
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-This module extends the existing MedFlow EMR with:
+This module extends the Zelphon Health EMR with:
 
   1. Video Visit Integration (Daily.co HIPAA-compliant API)
      - Creates private, one-time Daily.co rooms per appointment
@@ -41,7 +41,7 @@ INTEGRATION:
     DAILY_DOMAIN=your-subdomain.daily.co
     MSO_DASHBOARD_URL=https://mso-backend.up.railway.app
     MSO_DASHBOARD_API_KEY=your_mso_api_key
-    WEBSITE_ORIGIN=https://commonwealthsolutions.com
+    WEBSITE_ORIGIN=https://zelphonhealth.com
 
 HIPAA:
   - Daily.co must have a signed BAA with your account before use in production
@@ -78,7 +78,7 @@ MSO_DASHBOARD_URL  = os.getenv("MSO_DASHBOARD_URL", "")
 MSO_API_KEY        = os.getenv("MSO_DASHBOARD_API_KEY", "")
 WEBSITE_ORIGIN     = os.getenv("WEBSITE_ORIGIN", "")
 VISIT_TOKEN_TTL_H  = 2    # patient token TTL in hours
-PROVIDER_TOKEN_TTL = 12   # provider token TTL in hours
+PROVIDER_TOKEN_TTL = 8    # provider token TTL in hours — matches TOKEN_HOURS in main.py
 
 # ── Daily.co HTTP client ──────────────────────────────────────────────────────
 def daily_client():
@@ -148,7 +148,11 @@ def create_video_room(
                 },
             })
         if resp.status_code not in (200, 201):
-            raise HTTPException(502, f"Daily.co room creation failed: {resp.text}")
+            import logging as _tl_logging
+            _tl_logging.getLogger("zelphon.telehealth").error(
+                "Daily.co room creation failed: status=%s body=%s", resp.status_code, resp.text[:500]
+            )
+            raise HTTPException(502, "Video room creation failed — please try again or contact support.")
 
         # Persist room name in appointment notes field
         prefix = f"ROOM:{room_name}\n"
@@ -399,7 +403,7 @@ async def self_schedule(body: SelfScheduleRequest, request: Request, db: Session
                             raise HTTPException(
                                 400,
                                 f"This provider is not currently licensed to practice in {body.patient_state}. "
-                                f"Please contact us at support@commonwealthsolutions.com to find an available provider."
+                                f"Please contact us at support@zelphonhealth.com to find an available provider."
                             )
             except HTTPException:
                 raise
@@ -591,7 +595,6 @@ async def submit_intake(body: IntakeFormRequest, request: Request, db: Session =
 
     return {
         "status": "submitted",
-        "patient_id": patient.id,
         "message": "Thank you. Your information has been received. "
                    "A member of our clinical team will review your intake and contact you "
                    "within 1 business day to confirm your appointment and set up your patient portal access.",
@@ -771,7 +774,9 @@ async def provider_state_check(
 
         return {"licensed": True, "status": "not_found_in_mso", "message": "Provider not in MSO matrix — proceeding."}
     except Exception as e:
-        return {"licensed": True, "status": "error", "message": f"Compliance check failed: {str(e)} — proceeding with caution."}
+        import logging as _tl_logging
+        _tl_logging.getLogger("zelphon.telehealth").error("Compliance check failed: %s", str(e))
+        return {"licensed": True, "status": "error", "message": "Compliance check temporarily unavailable — proceeding with caution."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
